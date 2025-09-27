@@ -1,0 +1,114 @@
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github/
+
+# Documentation
+README.md
+CHANGELOG.md
+docs/
+*.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+htmlcov/
+
+# Virtual environments
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Development
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Node modules (if any)
+node_modules/
+
+# UV lock file (will be regenerated in container)
+uv.lock
+
+# Local development files
+docker-compose.override.yml
