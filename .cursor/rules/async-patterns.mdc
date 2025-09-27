@@ -1,0 +1,327 @@
+---
+description: Async programming patterns and best practices
+globs: ["**/*.py"]
+tags: ["async", "asyncio", "performance"]
+priority: 5
+alwaysApply: false
+---
+
+# Async Programming Patterns
+
+## Context
+Best practices for async/await programming in Python, focusing on proper event loop management, concurrency patterns, and common pitfalls to avoid.
+
+## Guidelines
+
+### Async Function Design
+- **Use async/await consistently** for I/O-bound operations
+- **Never block the event loop** with synchronous operations
+- **Prefer async context managers** for resource management
+- **Handle cancellation gracefully** with try/except
+- **Use proper timeout handling** to prevent hanging operations
+
+### Concurrency Patterns
+- **Use asyncio.gather()** for concurrent operations that can run in parallel
+- **Use asyncio.as_completed()** when you need results as they become available
+- **Implement semaphores** to limit concurrent operations
+- **Use queues** for producer-consumer patterns
+- **Avoid shared mutable state** between async functions
+
+### Error Handling in Async Code
+- **Wrap async operations** in try/except blocks
+- **Handle cancellation errors** appropriately
+- **Use asyncio.shield()** to protect critical operations
+- **Implement proper cleanup** in finally blocks
+- **Log async operation failures** with correlation IDs
+
+## Examples
+
+### ✅ Good Async Patterns
+
+#### Concurrent API Calls
+```python
+import asyncio
+import httpx
+from typing import List, Dict, Any
+
+async def fetch_user_data(
+    user_ids: List[str],
+    timeout: float = 30.0
+) -> Dict[str, Any]:
+    """Fetch user data concurrently for multiple users."""
+
+    async def fetch_single_user(user_id: str) -> tuple[str, Dict[str, Any]]:
+        """Fetch data for a single user."""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"/api/users/{user_id}",
+                    timeout=timeout
+                )
+                response.raise_for_status()
+                return user_id, response.json()
+            except httpx.HTTPError as e:
+                logger.warning(f"Failed to fetch user {user_id}: {e}")
+                return user_id, {}
+
+    # Execute all requests concurrently
+    tasks = [fetch_single_user(user_id) for user_id in user_ids]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results, handling any exceptions
+    user_data = {}
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error(f"User fetch failed: {result}")
+            continue
+        user_id, data = result
+        user_data[user_id] = data
+
+    return user_data
+```
+
+#### Async Context Manager
+```python
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+import aioredis
+
+@asynccontextmanager
+async def redis_connection() -> AsyncGenerator[aioredis.Redis, None]:
+    """Manage Redis connection with proper cleanup."""
+    redis = None
+    try:
+        redis = await aioredis.from_url("redis://localhost")
+        logger.debug("Redis connection established")
+        yield redis
+    except Exception as e:
+        logger.error(f"Redis connection error: {e}")
+        raise
+    finally:
+        if redis:
+            await redis.close()
+            logger.debug("Redis connection closed")
+
+# Usage
+async def cache_user_data(user_id: str, data: dict) -> None:
+    """Cache user data in Redis."""
+    async with redis_connection() as redis:
+        await redis.setex(f"user:{user_id}", 3600, json.dumps(data))
+```
+
+#### Producer-Consumer Pattern
+```python
+import asyncio
+from typing import AsyncGenerator
+
+async def data_producer(queue: asyncio.Queue) -> None:
+    """Produce data items and put them in the queue."""
+    try:
+        for i in range(100):
+            # Simulate data generation
+            await asyncio.sleep(0.1)
+            data = f"item_{i}"
+            await queue.put(data)
+            logger.debug(f"Produced: {data}")
+    except asyncio.CancelledError:
+        logger.info("Producer cancelled")
+        raise
+    finally:
+        # Signal completion
+        await queue.put(None)
+        logger.info("Producer finished")
+
+async def data_consumer(
+    queue: asyncio.Queue,
+    consumer_id: str
+) -> None:
+    """Consume data items from the queue."""
+    try:
+        while True:
+            # Wait for data with timeout
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Consumer {consumer_id}: timeout waiting for data")
+                continue
+
+            # Check for completion signal
+            if data is None:
+                logger.info(f"Consumer {consumer_id}: received completion signal")
+                # Put the signal back for other consumers
+                await queue.put(None)
+                break
+
+            # Process data
+            logger.debug(f"Consumer {consumer_id}: processing {data}")
+            await asyncio.sleep(0.2)  # Simulate processing
+
+            # Mark task as done
+            queue.task_done()
+
+    except asyncio.CancelledError:
+        logger.info(f"Consumer {consumer_id} cancelled")
+        raise
+
+async def run_producer_consumer():
+    """Run producer-consumer pattern."""
+    queue = asyncio.Queue(maxsize=10)
+
+    # Start producer and consumers
+    producer_task = asyncio.create_task(data_producer(queue))
+    consumer_tasks = [
+        asyncio.create_task(data_consumer(queue, f"consumer_{i}"))
+        for i in range(3)
+    ]
+
+    try:
+        # Wait for all tasks to complete
+        await asyncio.gather(producer_task, *consumer_tasks)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+        # Cancel all tasks
+        producer_task.cancel()
+        for task in consumer_tasks:
+            task.cancel()
+
+        # Wait for cancellation to complete
+        await asyncio.gather(
+            producer_task, *consumer_tasks,
+            return_exceptions=True
+        )
+```
+
+#### Rate-Limited API Calls
+```python
+import asyncio
+from asyncio import Semaphore
+from typing import List, Callable, Any
+
+class RateLimiter:
+    """Rate limiter using semaphore and time-based windows."""
+
+    def __init__(self, max_calls: int, time_window: float):
+        self.max_calls = max_calls
+        self.time_window = time_window
+        self.semaphore = Semaphore(max_calls)
+        self.call_times: List[float] = []
+
+    async def acquire(self) -> None:
+        """Acquire rate limit permission."""
+        await self.semaphore.acquire()
+
+        current_time = asyncio.get_event_loop().time()
+
+        # Remove old calls outside the time window
+        cutoff_time = current_time - self.time_window
+        self.call_times = [t for t in self.call_times if t > cutoff_time]
+
+        # If we're at the limit, wait until we can make another call
+        if len(self.call_times) >= self.max_calls:
+            sleep_time = self.call_times[0] + self.time_window - current_time
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+
+        self.call_times.append(current_time)
+
+    def release(self) -> None:
+        """Release rate limit permission."""
+        self.semaphore.release()
+
+async def rate_limited_api_call(
+    rate_limiter: RateLimiter,
+    api_func: Callable,
+    *args,
+    **kwargs
+) -> Any:
+    """Make an API call with rate limiting."""
+    await rate_limiter.acquire()
+    try:
+        return await api_func(*args, **kwargs)
+    finally:
+        rate_limiter.release()
+
+# Usage
+async def example_rate_limited_calls():
+    """Example of using rate limiter."""
+    rate_limiter = RateLimiter(max_calls=10, time_window=60.0)  # 10 calls per minute
+
+    async def api_call(data: str) -> str:
+        # Simulate API call
+        await asyncio.sleep(0.1)
+        return f"Result for {data}"
+
+    tasks = [
+        rate_limited_api_call(rate_limiter, api_call, f"data_{i}")
+        for i in range(50)
+    ]
+
+    results = await asyncio.gather(*tasks)
+    return results
+```
+
+### ❌ Poor Async Patterns
+
+#### Blocking the Event Loop
+```python
+# Bad: Blocking operations
+async def bad_file_read():
+    with open("large_file.txt") as f:  # Blocks event loop
+        return f.read()
+
+# Good: Use async file operations
+async def good_file_read():
+    import aiofiles
+    async with aiofiles.open("large_file.txt") as f:
+        return await f.read()
+```
+
+#### Improper Exception Handling
+```python
+# Bad: Not handling cancellation
+async def bad_cleanup():
+    try:
+        await some_operation()
+    except Exception:  # Too broad, catches CancelledError
+        pass
+
+# Good: Handle cancellation properly
+async def good_cleanup():
+    try:
+        await some_operation()
+    except asyncio.CancelledError:
+        logger.info("Operation cancelled")
+        raise  # Re-raise cancellation
+    except Exception as e:
+        logger.error(f"Operation failed: {e}")
+        raise
+```
+
+#### Poor Resource Management
+```python
+# Bad: No proper cleanup
+async def bad_resource_usage():
+    client = httpx.AsyncClient()
+    response = await client.get("/api/data")
+    return response.json()  # Client never closed
+
+# Good: Proper resource management
+async def good_resource_usage():
+    async with httpx.AsyncClient() as client:
+        response = await client.get("/api/data")
+        return response.json()
+```
+
+## Performance Considerations
+
+### Memory Management
+- **Use async generators** for streaming large datasets
+- **Implement backpressure** in producer-consumer patterns
+- **Monitor memory usage** in long-running async operations
+- **Use weak references** where appropriate to avoid memory leaks
+
+### Event Loop Optimisation
+- **Batch operations** when possible to reduce context switching
+- **Use asyncio.create_task()** for fire-and-forget operations
+- **Implement connection pooling** for external services
+- **Monitor event loop lag** in production environments

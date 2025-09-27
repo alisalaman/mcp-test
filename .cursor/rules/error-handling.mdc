@@ -1,0 +1,258 @@
+---
+description: Comprehensive error handling and resilience patterns
+globs: ["**/*.py"]
+tags: ["errors", "exceptions", "resilience"]
+priority: 3
+alwaysApply: false
+---
+
+# Error Handling & Resilience
+
+## Context
+Robust error handling strategies that ensure applications gracefully handle failures and provide meaningful feedback.
+
+## Guidelines
+
+### Exception Hierarchy Design
+- **Create custom exception hierarchies** that reflect business domains
+- **Distinguish between recoverable and non-recoverable errors**
+- **Use specific exception types** rather than generic Exception
+- **Include contextual information** in exception messages
+- **Maintain exception chaining** with `raise ... from ...`
+
+### Error Classification
+- **Retryable errors**: Network timeouts, rate limits, temporary service failures
+- **Non-retryable errors**: Authentication failures, validation errors, not found
+- **Critical errors**: Data corruption, security breaches, system failures
+- **User errors**: Invalid input, missing permissions, business rule violations
+
+### Logging & Observability
+- **Use structured logging** with correlation IDs
+- **Log at appropriate levels** (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **Include error context** in log messages
+- **Avoid logging sensitive information**
+- **Implement metrics** for error rates and patterns
+
+## Examples
+
+### ✅ Good Exception Hierarchy
+```python
+from enum import Enum
+from typing import Optional
+
+class ErrorSeverity(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class ApplicationError(Exception):
+    """Base exception for all application errors."""
+
+    def __init__(
+        self,
+        message: str,
+        error_code: str,
+        severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+        correlation_id: Optional[str] = None
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.severity = severity
+        self.correlation_id = correlation_id
+
+class ValidationError(ApplicationError):
+    """Raised when input validation fails."""
+
+    def __init__(self, field: str, value: str, reason: str):
+        super().__init__(
+            f"Validation failed for field '{field}': {reason}",
+            f"validation.{field}",
+            ErrorSeverity.LOW
+        )
+        self.field = field
+        self.value = value
+        self.reason = reason
+
+class ExternalServiceError(ApplicationError):
+    """Raised when external service calls fail."""
+
+    def __init__(self, service: str, operation: str, original_error: Exception):
+        super().__init__(
+            f"External service '{service}' failed during '{operation}': {str(original_error)}",
+            f"external.{service}.{operation}",
+            ErrorSeverity.HIGH
+        )
+        self.service = service
+        self.operation = operation
+        self.original_error = original_error
+```
+
+### ✅ Good Error Handling Pattern
+```python
+import logging
+from typing import Optional
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger(__name__)
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10)
+)
+async def call_external_service(
+    endpoint: str,
+    data: dict,
+    correlation_id: Optional[str] = None
+) -> dict:
+    """Call external service with retry logic."""
+    try:
+        # Attempt API call
+        response = await http_client.post(endpoint, json=data)
+        response.raise_for_status()
+
+        logger.info(
+            "External service call succeeded",
+            extra={
+                "endpoint": endpoint,
+                "status_code": response.status_code,
+                "correlation_id": correlation_id
+            }
+        )
+
+        return response.json()
+
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in {401, 403, 404}:
+            # Non-retryable errors
+            raise ExternalServiceError(
+                service="api",
+                operation="call",
+                original_error=e
+            ) from e
+        else:
+            # Retryable errors - let tenacity handle retry
+            logger.warning(
+                "External service call failed, will retry",
+                extra={
+                    "endpoint": endpoint,
+                    "status_code": e.response.status_code,
+                    "correlation_id": correlation_id,
+                    "error": str(e)
+                }
+            )
+            raise
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error in external service call",
+            extra={
+                "endpoint": endpoint,
+                "correlation_id": correlation_id,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
+        raise ExternalServiceError(
+            service="api",
+            operation="call",
+            original_error=e
+        ) from e
+```
+
+### ✅ Good Context Manager for Resource Cleanup
+```python
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+@asynccontextmanager
+async def database_transaction() -> AsyncGenerator[Connection, None]:
+    """Manage database transaction with proper cleanup."""
+    conn = None
+    try:
+        conn = await database.acquire()
+        tx = await conn.begin()
+
+        logger.debug("Database transaction started")
+        yield conn
+
+        await tx.commit()
+        logger.debug("Database transaction committed")
+
+    except Exception as e:
+        if conn:
+            await tx.rollback()
+            logger.warning(
+                "Database transaction rolled back",
+                extra={"error": str(e)}
+            )
+        raise
+
+    finally:
+        if conn:
+            await database.release(conn)
+            logger.debug("Database connection released")
+```
+
+### ❌ Poor Error Handling
+```python
+def process_data(data):
+    try:
+        # Some processing
+        result = external_api.call(data)
+        return result
+    except:  # Too broad
+        print("Something went wrong")  # Poor logging
+        return None  # Swallowing errors
+```
+
+## Circuit Breaker Pattern
+```python
+from enum import Enum
+import time
+from typing import Callable, Any
+
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = 0
+        self.state = CircuitState.CLOSED
+
+    async def call(self, func: Callable, *args, **kwargs) -> Any:
+        if self.state == CircuitState.OPEN:
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = CircuitState.HALF_OPEN
+            else:
+                raise ExternalServiceError(
+                    service="circuit_breaker",
+                    operation="call",
+                    original_error=Exception("Circuit breaker is open")
+                )
+
+        try:
+            result = await func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise
+
+    def _on_success(self):
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
+
+    def _on_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+```

@@ -1,0 +1,297 @@
+---
+description: Comprehensive testing strategies and best practices
+globs: ["**/test_*.py", "**/tests/*.py", "**/*_test.py"]
+tags: ["testing", "pytest", "quality"]
+priority: 4
+alwaysApply: false
+---
+
+# Testing Standards & Strategies
+
+## Context
+Comprehensive testing approach following the test pyramid, emphasising automated testing, clear test documentation, and maintainable test code.
+
+## Guidelines
+
+### Test Pyramid Strategy
+- **Unit Tests (70%)**: Fast, isolated tests for individual functions/classes
+- **Integration Tests (20%)**: Test component interactions and external services
+- **End-to-End Tests (10%)**: Test complete user workflows
+
+### Test Organisation
+- **Follow naming conventions**: `test_*.py` for test files
+- **Group related tests** in classes using `Test*` naming
+- **Use descriptive test names** that explain the scenario
+- **Organise tests** to mirror source code structure
+- **Separate test types** into different directories (unit/, integration/, e2e/)
+
+### Test Quality Standards
+- **Each test should test one thing** (single assertion principle when appropriate)
+- **Tests should be independent** and able to run in any order
+- **Use appropriate fixtures** for test data and setup
+- **Mock external dependencies** in unit tests
+- **Test both happy paths and error conditions**
+
+## Examples
+
+### ✅ Good Test Structure
+```python
+import pytest
+from unittest.mock import AsyncMock, patch
+from myapp.services.user_service import UserService
+from myapp.domain.models import User
+from myapp.domain.exceptions import ValidationError
+
+class TestUserService:
+    """Test suite for UserService."""
+
+    @pytest.fixture
+    def user_service(self, mock_user_repository):
+        """Create UserService instance with mocked dependencies."""
+        return UserService(repository=mock_user_repository)
+
+    @pytest.fixture
+    def mock_user_repository(self):
+        """Mock user repository."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def valid_user_data(self):
+        """Valid user data for testing."""
+        return {
+            "name": "John Smith",
+            "email": "john.smith@example.com",
+            "age": 30
+        }
+
+    async def test_create_user_with_valid_data_succeeds(
+        self,
+        user_service: UserService,
+        mock_user_repository: AsyncMock,
+        valid_user_data: dict
+    ):
+        """Should successfully create user when given valid data."""
+        # Arrange
+        expected_user = User(**valid_user_data)
+        mock_user_repository.save.return_value = expected_user
+
+        # Act
+        result = await user_service.create_user(**valid_user_data)
+
+        # Assert
+        assert result == expected_user
+        mock_user_repository.save.assert_called_once()
+
+    async def test_create_user_with_invalid_email_raises_validation_error(
+        self,
+        user_service: UserService,
+        valid_user_data: dict
+    ):
+        """Should raise ValidationError when email is invalid."""
+        # Arrange
+        valid_user_data["email"] = "invalid-email"
+
+        # Act & Assert
+        with pytest.raises(ValidationError) as exc_info:
+            await user_service.create_user(**valid_user_data)
+
+        assert "email" in str(exc_info.value)
+
+    @pytest.mark.parametrize("age", [-1, 0, 150])
+    async def test_create_user_with_invalid_age_raises_validation_error(
+        self,
+        user_service: UserService,
+        valid_user_data: dict,
+        age: int
+    ):
+        """Should raise ValidationError when age is outside valid range."""
+        # Arrange
+        valid_user_data["age"] = age
+
+        # Act & Assert
+        with pytest.raises(ValidationError) as exc_info:
+            await user_service.create_user(**valid_user_data)
+
+        assert "age" in str(exc_info.value)
+```
+
+### ✅ Good Integration Test
+```python
+import pytest
+import httpx
+from fastapi.testclient import TestClient
+from myapp.main import app
+
+class TestUserAPI:
+    """Integration tests for User API endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        """Test client for API calls."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def auth_headers(self):
+        """Authentication headers for API calls."""
+        return {"Authorization": "Bearer test-token"}
+
+    def test_create_user_endpoint_returns_201_for_valid_data(
+        self,
+        client: TestClient,
+        auth_headers: dict
+    ):
+        """POST /users should return 201 and user data for valid input."""
+        # Arrange
+        user_data = {
+            "name": "Jane Doe",
+            "email": "jane.doe@example.com",
+            "age": 25
+        }
+
+        # Act
+        response = client.post(
+            "/api/v1/users",
+            json=user_data,
+            headers=auth_headers
+        )
+
+        # Assert
+        assert response.status_code == 201
+        response_data = response.json()
+        assert response_data["name"] == user_data["name"]
+        assert response_data["email"] == user_data["email"]
+        assert "id" in response_data
+
+    def test_create_user_endpoint_returns_400_for_invalid_data(
+        self,
+        client: TestClient,
+        auth_headers: dict
+    ):
+        """POST /users should return 400 for invalid input."""
+        # Arrange
+        invalid_data = {"name": "", "email": "invalid"}
+
+        # Act
+        response = client.post(
+            "/api/v1/users",
+            json=invalid_data,
+            headers=auth_headers
+        )
+
+        # Assert
+        assert response.status_code == 400
+        assert "validation" in response.json()["error_code"]
+```
+
+### ✅ Good Property-Based Test
+```python
+from hypothesis import given, strategies as st
+from myapp.utils.validation import validate_email
+
+class TestEmailValidation:
+    """Property-based tests for email validation."""
+
+    @given(st.emails())
+    def test_valid_emails_pass_validation(self, email: str):
+        """All valid emails should pass validation."""
+        assert validate_email(email) is True
+
+    @given(st.text().filter(lambda x: "@" not in x))
+    def test_strings_without_at_symbol_fail_validation(self, text: str):
+        """Strings without @ symbol should fail validation."""
+        assert validate_email(text) is False
+```
+
+### ✅ Good Mock Usage
+```python
+@pytest.mark.asyncio
+async def test_external_service_call_with_retry():
+    """Should retry on transient failures and eventually succeed."""
+    with patch('myapp.services.external_api.httpx.AsyncClient') as mock_client:
+        # Arrange: First two calls fail, third succeeds
+        mock_response = AsyncMock()
+        mock_response.json.return_value = {"status": "success"}
+
+        mock_client.return_value.__aenter__.return_value.post.side_effect = [
+            httpx.TimeoutException("Timeout"),
+            httpx.TimeoutException("Timeout"),
+            mock_response
+        ]
+
+        # Act
+        result = await external_service.call_api("test-endpoint", {"data": "value"})
+
+        # Assert
+        assert result["status"] == "success"
+        assert mock_client.return_value.__aenter__.return_value.post.call_count == 3
+```
+
+### ❌ Poor Test Examples
+```python
+# Poor: Generic test name
+def test_user():
+    pass
+
+# Poor: Testing multiple things
+def test_user_creation_and_validation_and_saving():
+    user = create_user("John", "john@email.com")
+    assert user.name == "John"
+    assert validate_email(user.email)
+    assert save_user(user)
+
+# Poor: No arrange/act/assert structure
+def test_calculation():
+    assert calculate(2, 3) == 5
+
+# Poor: Hard to understand what's being tested
+def test_complex_business_logic():
+    result = complex_function(data1, data2, flag=True)
+    assert result[0]["nested"]["value"] > 10
+```
+
+## Test Configuration
+
+### pytest.ini
+```ini
+[tool:pytest]
+testpaths = tests
+python_files = test_*.py *_test.py
+python_classes = Test*
+python_functions = test_*
+addopts =
+    --strict-markers
+    --strict-config
+    --cov=myapp
+    --cov-report=term-missing
+    --cov-report=html
+    --cov-fail-under=80
+markers =
+    unit: Unit tests
+    integration: Integration tests
+    e2e: End-to-end tests
+    slow: Slow tests that may be skipped
+```
+
+### Useful Fixtures
+```python
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for async tests."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture
+async def database():
+    """Provide clean database for each test."""
+    async with test_database() as db:
+        yield db
+        await db.rollback()
+
+@pytest.fixture
+def freeze_time():
+    """Freeze time for consistent testing."""
+    with patch('myapp.utils.datetime.now') as mock_now:
+        mock_now.return_value = datetime(2023, 1, 1, 12, 0, 0)
+        yield mock_now
+```

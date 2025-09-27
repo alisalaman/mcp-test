@@ -1,0 +1,764 @@
+---
+description: Resilience patterns including circuit breakers, retries, and graceful degradation
+globs: ["**/*.py"]
+tags: ["resilience", "reliability", "fault-tolerance"]
+priority: 8
+alwaysApply: false
+---
+
+# Resilience & Fault Tolerance
+
+## Context
+Patterns and strategies for building resilient systems that gracefully handle failures, implement proper retry logic, and maintain service availability even when dependencies fail.
+
+## Guidelines
+
+### Circuit Breaker Pattern
+- **Implement circuit breakers** for external service calls
+- **Configure appropriate failure thresholds** based on service characteristics
+- **Use exponential backoff** for recovery attempts
+- **Provide meaningful fallback responses** when circuits are open
+- **Monitor circuit breaker state changes** and alert on frequent trips
+
+### Retry Strategies
+- **Distinguish retryable from non-retryable errors**
+- **Implement exponential backoff with jitter** to avoid thundering herd
+- **Set maximum retry limits** to prevent infinite loops
+- **Use different retry policies** for different error types
+- **Track retry budgets** to prevent retry storms
+
+### Graceful Degradation
+- **Design fallback mechanisms** for critical functionality
+- **Implement feature flags** for disabling non-essential features
+- **Cache critical data** for offline operation
+- **Provide degraded responses** rather than complete failures
+- **Communicate service status** to users clearly
+
+### Timeout Management
+- **Set appropriate timeouts** for all external calls
+- **Use different timeout values** for different operations
+- **Implement cascading timeouts** in service chains
+- **Handle timeout exceptions** gracefully
+- **Monitor timeout patterns** and adjust as needed
+
+## Examples
+
+### ✅ Good Circuit Breaker Implementation
+```python
+import asyncio
+import time
+import logging
+from enum import Enum
+from typing import Optional, Callable, Any, Dict
+from dataclasses import dataclass, field
+from prometheus_client import Counter, Gauge, Histogram
+
+logger = logging.getLogger(__name__)
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+@dataclass
+class CircuitBreakerConfig:
+    """Configuration for circuit breaker behaviour."""
+    failure_threshold: int = 5
+    recovery_timeout: int = 60  # seconds
+    success_threshold: int = 3  # for half-open state
+    timeout: float = 30.0
+    expected_exceptions: tuple = (ConnectionError, TimeoutError)
+
+@dataclass
+class CircuitBreakerMetrics:
+    """Metrics for circuit breaker monitoring."""
+    total_requests: int = 0
+    successful_requests: int = 0
+    failed_requests: int = 0
+    last_failure_time: float = 0
+    consecutive_failures: int = 0
+    consecutive_successes: int = 0
+    state_changes: Dict[str, int] = field(default_factory=dict)
+
+class CircuitBreaker:
+    """Advanced circuit breaker with monitoring and fallbacks."""
+
+    def __init__(
+        self,
+        name: str,
+        config: CircuitBreakerConfig,
+        fallback_func: Optional[Callable] = None
+    ):
+        self.name = name
+        self.config = config
+        self.fallback_func = fallback_func
+
+        self._state = CircuitState.CLOSED
+        self._metrics = CircuitBreakerMetrics()
+        self._lock = asyncio.Lock()
+
+        # Prometheus metrics
+        self._setup_metrics()
+
+    def _setup_metrics(self) -> None:
+        """Set up Prometheus metrics."""
+        self.requests_total = Counter(
+            'circuit_breaker_requests_total',
+            'Total requests through circuit breaker',
+            ['name', 'state', 'outcome']
+        )
+
+        self.state_gauge = Gauge(
+            'circuit_breaker_state',
+            'Current circuit breaker state (0=closed, 1=open, 2=half_open)',
+            ['name']
+        )
+
+        self.failure_rate = Gauge(
+            'circuit_breaker_failure_rate',
+            'Current failure rate',
+            ['name']
+        )
+
+    @property
+    def state(self) -> CircuitState:
+        """Get current circuit breaker state."""
+        return self._state
+
+    @property
+    def is_closed(self) -> bool:
+        """Check if circuit is closed."""
+        return self._state == CircuitState.CLOSED
+
+    @property
+    def is_open(self) -> bool:
+        """Check if circuit is open."""
+        return self._state == CircuitState.OPEN
+
+    @property
+    def is_half_open(self) -> bool:
+        """Check if circuit is half-open."""
+        return self._state == CircuitState.HALF_OPEN
+
+    async def call(self, func: Callable, *args, **kwargs) -> Any:
+        """Execute function with circuit breaker protection."""
+
+        # Check if we should attempt reset
+        await self._check_for_state_transition()
+
+        # If circuit is open, use fallback or fail fast
+        if self.is_open:
+            if self.fallback_func:
+                logger.info(f"Circuit {self.name} open, using fallback")
+                return await self._execute_fallback(*args, **kwargs)
+            else:
+                raise CircuitBreakerOpenError(f"Circuit breaker {self.name} is open")
+
+        # Execute the function
+        try:
+            start_time = time.time()
+
+            # Apply timeout
+            result = await asyncio.wait_for(
+                func(*args, **kwargs),
+                timeout=self.config.timeout
+            )
+
+            duration = time.time() - start_time
+            await self._record_success(duration)
+
+            return result
+
+        except asyncio.TimeoutError as e:
+            await self._record_failure(e)
+            raise TimeoutError(f"Operation timed out after {self.config.timeout}s")
+
+        except Exception as e:
+            await self._record_failure(e)
+
+            # Re-raise non-retryable exceptions immediately
+            if not isinstance(e, self.config.expected_exceptions):
+                raise
+
+            # For expected exceptions, let circuit breaker logic handle it
+            if self.fallback_func and self.is_open:
+                return await self._execute_fallback(*args, **kwargs)
+
+            raise
+
+    async def _execute_fallback(self, *args, **kwargs) -> Any:
+        """Execute fallback function."""
+        try:
+            if asyncio.iscoroutinefunction(self.fallback_func):
+                return await self.fallback_func(*args, **kwargs)
+            else:
+                return self.fallback_func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Fallback function failed for circuit {self.name}: {e}")
+            raise
+
+    async def _record_success(self, duration: float) -> None:
+        """Record successful operation."""
+        async with self._lock:
+            self._metrics.total_requests += 1
+            self._metrics.successful_requests += 1
+            self._metrics.consecutive_failures = 0
+            self._metrics.consecutive_successes += 1
+
+            # Update metrics
+            self.requests_total.labels(
+                name=self.name,
+                state=self._state.value,
+                outcome='success'
+            ).inc()
+
+            # Check for state transition from half-open to closed
+            if (self.is_half_open and
+                self._metrics.consecutive_successes >= self.config.success_threshold):
+                await self._change_state(CircuitState.CLOSED)
+
+    async def _record_failure(self, exception: Exception) -> None:
+        """Record failed operation."""
+        async with self._lock:
+            self._metrics.total_requests += 1
+            self._metrics.failed_requests += 1
+            self._metrics.consecutive_failures += 1
+            self._metrics.consecutive_successes = 0
+            self._metrics.last_failure_time = time.time()
+
+            # Update metrics
+            self.requests_total.labels(
+                name=self.name,
+                state=self._state.value,
+                outcome='failure'
+            ).inc()
+
+            # Update failure rate
+            total = self._metrics.total_requests
+            if total > 0:
+                failure_rate = self._metrics.failed_requests / total
+                self.failure_rate.labels(name=self.name).set(failure_rate)
+
+            # Check if we should open the circuit
+            if (self._state != CircuitState.OPEN and
+                self._metrics.consecutive_failures >= self.config.failure_threshold):
+                await self._change_state(CircuitState.OPEN)
+
+    async def _check_for_state_transition(self) -> None:
+        """Check if circuit should transition states."""
+        if self.is_open:
+            time_since_failure = time.time() - self._metrics.last_failure_time
+            if time_since_failure >= self.config.recovery_timeout:
+                await self._change_state(CircuitState.HALF_OPEN)
+
+    async def _change_state(self, new_state: CircuitState) -> None:
+        """Change circuit breaker state."""
+        if new_state == self._state:
+            return
+
+        old_state = self._state
+        self._state = new_state
+
+        # Reset counters on state change
+        if new_state == CircuitState.HALF_OPEN:
+            self._metrics.consecutive_successes = 0
+        elif new_state == CircuitState.CLOSED:
+            self._metrics.consecutive_failures = 0
+            self._metrics.consecutive_successes = 0
+
+        # Update metrics
+        self.state_gauge.labels(name=self.name).set({
+            CircuitState.CLOSED: 0,
+            CircuitState.OPEN: 1,
+            CircuitState.HALF_OPEN: 2
+        }[new_state])
+
+        # Track state changes
+        transition = f"{old_state.value}_to_{new_state.value}"
+        self._metrics.state_changes[transition] = (
+            self._metrics.state_changes.get(transition, 0) + 1
+        )
+
+        logger.warning(
+            f"Circuit breaker {self.name} state changed: {old_state.value} -> {new_state.value}",
+            extra={
+                "circuit_name": self.name,
+                "old_state": old_state.value,
+                "new_state": new_state.value,
+                "consecutive_failures": self._metrics.consecutive_failures,
+                "total_requests": self._metrics.total_requests
+            }
+        )
+
+class CircuitBreakerOpenError(Exception):
+    """Raised when circuit breaker is open."""
+    pass
+```
+
+### ✅ Good Retry Strategy Implementation
+```python
+import asyncio
+import random
+import time
+from typing import Optional, Callable, Type, Union, Tuple
+from dataclasses import dataclass
+from tenacity import (
+    retry, stop_after_attempt, wait_exponential_jitter,
+    retry_if_exception_type, before_sleep_log, after_log
+)
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry behaviour."""
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    multiplier: float = 2.0
+    jitter: bool = True
+    retryable_exceptions: Tuple[Type[Exception], ...] = (
+        ConnectionError, TimeoutError, OSError
+    )
+    non_retryable_exceptions: Tuple[Type[Exception], ...] = (
+        ValueError, TypeError, AttributeError
+    )
+
+class RetryBudget:
+    """Manage retry budget to prevent retry storms."""
+
+    def __init__(self, max_retries_per_minute: int = 100):
+        self.max_retries_per_minute = max_retries_per_minute
+        self.retry_timestamps = []
+        self.lock = asyncio.Lock()
+
+    async def can_retry(self) -> bool:
+        """Check if we have retry budget available."""
+        async with self.lock:
+            now = time.time()
+            cutoff = now - 60  # One minute ago
+
+            # Remove old retry attempts
+            self.retry_timestamps = [
+                ts for ts in self.retry_timestamps if ts > cutoff
+            ]
+
+            return len(self.retry_timestamps) < self.max_retries_per_minute
+
+    async def consume_retry(self) -> None:
+        """Consume one retry from the budget."""
+        async with self.lock:
+            self.retry_timestamps.append(time.time())
+
+class ResilientService:
+    """Service wrapper with comprehensive resilience patterns."""
+
+    def __init__(
+        self,
+        name: str,
+        retry_config: RetryConfig = RetryConfig(),
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        retry_budget: Optional[RetryBudget] = None
+    ):
+        self.name = name
+        self.retry_config = retry_config
+        self.circuit_breaker = circuit_breaker
+        self.retry_budget = retry_budget or RetryBudget()
+
+    async def execute(
+        self,
+        func: Callable,
+        *args,
+        fallback_func: Optional[Callable] = None,
+        **kwargs
+    ) -> Any:
+        """Execute function with full resilience stack."""
+
+        # If we have a circuit breaker, use it
+        if self.circuit_breaker:
+            return await self.circuit_breaker.call(
+                self._execute_with_retry,
+                func, *args, **kwargs
+            )
+        else:
+            return await self._execute_with_retry(func, *args, **kwargs)
+
+    async def _execute_with_retry(
+        self,
+        func: Callable,
+        *args,
+        **kwargs
+    ) -> Any:
+        """Execute function with retry logic."""
+
+        last_exception = None
+
+        for attempt in range(self.retry_config.max_attempts):
+            try:
+                # Check retry budget for subsequent attempts
+                if attempt > 0:
+                    if not await self.retry_budget.can_retry():
+                        logger.warning(
+                            f"Retry budget exhausted for service {self.name}"
+                        )
+                        raise last_exception
+
+                    await self.retry_budget.consume_retry()
+
+                    # Calculate delay with jitter
+                    delay = min(
+                        self.retry_config.base_delay *
+                        (self.retry_config.multiplier ** (attempt - 1)),
+                        self.retry_config.max_delay
+                    )
+
+                    if self.retry_config.jitter:
+                        delay *= (0.5 + random.random() * 0.5)  # ±25% jitter
+
+                    logger.info(
+                        f"Retrying {self.name} attempt {attempt + 1} "
+                        f"after {delay:.2f}s delay"
+                    )
+
+                    await asyncio.sleep(delay)
+
+                # Execute the function
+                if asyncio.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                else:
+                    return func(*args, **kwargs)
+
+            except Exception as e:
+                last_exception = e
+
+                # Check if this exception is retryable
+                if isinstance(e, self.retry_config.non_retryable_exceptions):
+                    logger.info(
+                        f"Non-retryable exception in {self.name}: {type(e).__name__}"
+                    )
+                    raise
+
+                if not isinstance(e, self.retry_config.retryable_exceptions):
+                    logger.warning(
+                        f"Unexpected exception in {self.name}: {type(e).__name__}"
+                    )
+                    # Treat unexpected exceptions as retryable
+
+                logger.warning(
+                    f"Attempt {attempt + 1} failed for {self.name}: {e}"
+                )
+
+                # If this is the last attempt, raise the exception
+                if attempt == self.retry_config.max_attempts - 1:
+                    raise
+
+        # Should never reach here, but just in case
+        raise last_exception
+
+# Usage example
+async def example_resilient_api_call():
+    """Example of using resilient service wrapper."""
+
+    # Configure circuit breaker
+    circuit_config = CircuitBreakerConfig(
+        failure_threshold=5,
+        recovery_timeout=60,
+        timeout=30.0
+    )
+
+    async def fallback_response():
+        return {"status": "degraded", "message": "Service temporarily unavailable"}
+
+    circuit_breaker = CircuitBreaker(
+        name="external_api",
+        config=circuit_config,
+        fallback_func=fallback_response
+    )
+
+    # Configure retry
+    retry_config = RetryConfig(
+        max_attempts=3,
+        base_delay=1.0,
+        max_delay=30.0
+    )
+
+    # Create resilient service
+    service = ResilientService(
+        name="external_api",
+        retry_config=retry_config,
+        circuit_breaker=circuit_breaker
+    )
+
+    async def api_call():
+        async with httpx.AsyncClient() as client:
+            response = await client.get("https://api.example.com/data")
+            response.raise_for_status()
+            return response.json()
+
+    try:
+        result = await service.execute(api_call)
+        return result
+    except Exception as e:
+        logger.error(f"All resilience strategies exhausted: {e}")
+        # Return default/cached response or re-raise
+        raise
+```
+
+### ✅ Good Graceful Degradation
+```python
+from typing import Optional, Dict, Any, List
+from enum import Enum
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ServiceLevel(Enum):
+    """Service levels for graceful degradation."""
+    FULL = "full"
+    DEGRADED = "degraded"
+    MINIMAL = "minimal"
+    OFFLINE = "offline"
+
+class FeatureFlag:
+    """Feature flag for enabling/disabling functionality."""
+
+    def __init__(self, name: str, enabled: bool = True):
+        self.name = name
+        self.enabled = enabled
+        self.dependencies = []
+
+    def is_enabled(self) -> bool:
+        """Check if feature is enabled and dependencies are available."""
+        if not self.enabled:
+            return False
+
+        # Check dependencies
+        for dep in self.dependencies:
+            if not dep.is_available():
+                return False
+
+        return True
+
+class GracefulService:
+    """Service that degrades gracefully when dependencies fail."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.service_level = ServiceLevel.FULL
+        self.feature_flags: Dict[str, FeatureFlag] = {}
+        self.cached_data: Dict[str, Any] = {}
+        self.dependency_health: Dict[str, bool] = {}
+
+    def add_feature_flag(self, name: str, enabled: bool = True) -> FeatureFlag:
+        """Add a feature flag."""
+        flag = FeatureFlag(name, enabled)
+        self.feature_flags[name] = flag
+        return flag
+
+    def update_dependency_health(self, dependency: str, is_healthy: bool) -> None:
+        """Update dependency health status."""
+        self.dependency_health[dependency] = is_healthy
+        self._recalculate_service_level()
+
+    def _recalculate_service_level(self) -> None:
+        """Recalculate service level based on dependency health."""
+        healthy_deps = sum(1 for is_healthy in self.dependency_health.values() if is_healthy)
+        total_deps = len(self.dependency_health)
+
+        if total_deps == 0:
+            return
+
+        health_ratio = healthy_deps / total_deps
+
+        if health_ratio >= 0.8:
+            new_level = ServiceLevel.FULL
+        elif health_ratio >= 0.5:
+            new_level = ServiceLevel.DEGRADED
+        elif health_ratio >= 0.2:
+            new_level = ServiceLevel.MINIMAL
+        else:
+            new_level = ServiceLevel.OFFLINE
+
+        if new_level != self.service_level:
+            logger.warning(
+                f"Service {self.name} level changed: {self.service_level.value} -> {new_level.value}"
+            )
+            self.service_level = new_level
+
+    async def get_user_recommendations(
+        self,
+        user_id: str,
+        use_cache: bool = True
+    ) -> Dict[str, Any]:
+        """Get user recommendations with graceful degradation."""
+
+        cache_key = f"recommendations:{user_id}"
+
+        # Check service level and feature flags
+        ml_feature = self.feature_flags.get("ml_recommendations", FeatureFlag("ml_recommendations", True))
+
+        if self.service_level == ServiceLevel.FULL and ml_feature.is_enabled():
+            try:
+                # Full service: Use ML recommendations
+                recommendations = await self._get_ml_recommendations(user_id)
+
+                # Cache the result
+                self.cached_data[cache_key] = {
+                    "data": recommendations,
+                    "timestamp": time.time(),
+                    "level": "full"
+                }
+
+                return {
+                    "recommendations": recommendations,
+                    "source": "ml_engine",
+                    "service_level": self.service_level.value
+                }
+
+            except Exception as e:
+                logger.warning(f"ML recommendations failed: {e}")
+                # Fall through to degraded mode
+
+        if self.service_level in {ServiceLevel.FULL, ServiceLevel.DEGRADED}:
+            try:
+                # Degraded service: Use rule-based recommendations
+                recommendations = await self._get_rule_based_recommendations(user_id)
+
+                return {
+                    "recommendations": recommendations,
+                    "source": "rule_based",
+                    "service_level": self.service_level.value
+                }
+
+            except Exception as e:
+                logger.warning(f"Rule-based recommendations failed: {e}")
+                # Fall through to minimal mode
+
+        if self.service_level in {ServiceLevel.FULL, ServiceLevel.DEGRADED, ServiceLevel.MINIMAL}:
+            # Minimal service: Use cached data or popular items
+            if use_cache and cache_key in self.cached_data:
+                cached = self.cached_data[cache_key]
+
+                return {
+                    "recommendations": cached["data"],
+                    "source": "cache",
+                    "service_level": "minimal",
+                    "cached_at": cached["timestamp"]
+                }
+
+            # Fallback to popular items
+            try:
+                popular_items = await self._get_popular_items()
+
+                return {
+                    "recommendations": popular_items,
+                    "source": "popular_fallback",
+                    "service_level": "minimal"
+                }
+
+            except Exception as e:
+                logger.error(f"Popular items fallback failed: {e}")
+
+        # Service offline: Return empty recommendations with explanation
+        return {
+            "recommendations": [],
+            "source": "none",
+            "service_level": "offline",
+            "message": "Recommendation service is temporarily unavailable"
+        }
+
+    async def _get_ml_recommendations(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get ML-based recommendations (requires ML service)."""
+        # This would call your ML service
+        await asyncio.sleep(0.1)  # Simulate API call
+        return [{"id": 1, "title": "ML Recommendation"}]
+
+    async def _get_rule_based_recommendations(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get rule-based recommendations (requires user service)."""
+        # This would call your user service and apply rules
+        await asyncio.sleep(0.05)  # Simulate faster fallback
+        return [{"id": 2, "title": "Rule-based Recommendation"}]
+
+    async def _get_popular_items(self) -> List[Dict[str, Any]]:
+        """Get popular items (minimal dependencies)."""
+        # This could be cached data or simple database query
+        return [{"id": 3, "title": "Popular Item"}]
+
+# Health check system
+class HealthChecker:
+    """Monitor service health and update degradation status."""
+
+    def __init__(self, service: GracefulService):
+        self.service = service
+        self.check_interval = 30  # seconds
+        self._running = False
+
+    async def start_monitoring(self) -> None:
+        """Start health monitoring."""
+        self._running = True
+
+        while self._running:
+            await self._check_all_dependencies()
+            await asyncio.sleep(self.check_interval)
+
+    def stop_monitoring(self) -> None:
+        """Stop health monitoring."""
+        self._running = False
+
+    async def _check_all_dependencies(self) -> None:
+        """Check health of all dependencies."""
+        dependencies = {
+            "ml_service": self._check_ml_service,
+            "user_service": self._check_user_service,
+            "database": self._check_database
+        }
+
+        for dep_name, check_func in dependencies.items():
+            try:
+                is_healthy = await asyncio.wait_for(check_func(), timeout=5.0)
+                self.service.update_dependency_health(dep_name, is_healthy)
+            except Exception as e:
+                logger.warning(f"Health check failed for {dep_name}: {e}")
+                self.service.update_dependency_health(dep_name, False)
+
+    async def _check_ml_service(self) -> bool:
+        """Check ML service health."""
+        # Implement actual health check
+        return True
+
+    async def _check_user_service(self) -> bool:
+        """Check user service health."""
+        # Implement actual health check
+        return True
+
+    async def _check_database(self) -> bool:
+        """Check database health."""
+        # Implement actual health check
+        return True
+```
+
+### ❌ Poor Resilience Patterns
+
+```python
+# Bad: No retry logic
+async def bad_api_call():
+    response = await httpx.get("https://unreliable-api.com/data")
+    return response.json()  # Fails immediately on any error
+
+# Bad: Infinite retries
+async def bad_retry():
+    while True:  # Never stops retrying
+        try:
+            return await api_call()
+        except:
+            await asyncio.sleep(1)
+
+# Bad: No timeout
+async def bad_no_timeout():
+    return await some_external_call()  # Could hang forever
+
+# Bad: No graceful degradation
+async def bad_all_or_nothing():
+    result = await expensive_ml_service()  # If this fails, everything fails
+    return result
+```

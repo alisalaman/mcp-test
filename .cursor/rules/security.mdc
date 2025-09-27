@@ -1,0 +1,495 @@
+---
+description: Security best practices and secure coding guidelines
+globs: ["**/*.py"]
+tags: ["security", "authentication", "validation"]
+priority: 6
+alwaysApply: false
+---
+
+# Security Best Practices
+
+## Context
+Comprehensive security guidelines to protect applications from common vulnerabilities and ensure secure coding practices throughout the development lifecycle.
+
+## Guidelines
+
+### Input Validation & Sanitisation
+- **Validate all input data** at application boundaries
+- **Use allowlists over denylists** for validation
+- **Sanitise data** before processing or storage
+- **Implement proper encoding** for different contexts (HTML, SQL, etc.)
+- **Reject malformed input** rather than attempting to clean it
+
+### Authentication & Authorisation
+- **Never store passwords in plain text** - use proper hashing (bcrypt, scrypt, Argon2)
+- **Implement proper session management** with secure tokens
+- **Use multi-factor authentication** where appropriate
+- **Apply principle of least privilege** for access controls
+- **Validate permissions** on every protected operation
+
+### Secrets Management
+- **Never commit secrets** to version control
+- **Use environment variables** or dedicated secret management systems
+- **Rotate secrets regularly** and have revocation procedures
+- **Encrypt secrets at rest** and in transit
+- **Audit secret access** and usage
+
+### Data Protection
+- **Encrypt sensitive data** both at rest and in transit
+- **Use TLS 1.3** for all external communications
+- **Implement proper key management** with regular rotation
+- **Minimise data collection** - only collect what's necessary
+- **Implement data retention policies** and secure deletion
+
+## Examples
+
+### ✅ Good Input Validation
+```python
+from typing import Optional
+import re
+from pydantic import BaseModel, validator, Field
+from email_validator import validate_email, EmailNotValidError
+
+class UserRegistration(BaseModel):
+    """User registration with comprehensive validation."""
+
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str
+    password: str = Field(..., min_length=8)
+    age: Optional[int] = Field(None, ge=13, le=120)
+
+    @validator('username')
+    def validate_username(cls, v: str) -> str:
+        """Validate username contains only allowed characters."""
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('Username can only contain letters, numbers, hyphens, and underscores')
+
+        # Check against known bad usernames
+        forbidden_usernames = {'admin', 'root', 'system', 'null', 'undefined'}
+        if v.lower() in forbidden_usernames:
+            raise ValueError('Username not allowed')
+
+        return v
+
+    @validator('email')
+    def validate_email_format(cls, v: str) -> str:
+        """Validate email format and domain."""
+        try:
+            # Validate email format
+            valid = validate_email(v)
+            email = valid.email
+
+            # Additional domain validation
+            domain = email.split('@')[1]
+            if domain in {'example.com', 'test.com', 'localhost'}:
+                raise ValueError('Email domain not allowed')
+
+            return email
+        except EmailNotValidError:
+            raise ValueError('Invalid email format')
+
+    @validator('password')
+    def validate_password_strength(cls, v: str) -> str:
+        """Validate password meets security requirements."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+
+        # Check for required character types
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v)
+
+        if not all([has_upper, has_lower, has_digit, has_special]):
+            raise ValueError(
+                'Password must contain uppercase, lowercase, digit, and special character'
+            )
+
+        # Check against common passwords
+        common_passwords = {'password', '12345678', 'qwerty123'}
+        if v.lower() in common_passwords:
+            raise ValueError('Password is too common')
+
+        return v
+
+# Usage with proper error handling
+async def register_user(registration_data: dict) -> dict:
+    """Register new user with validation."""
+    try:
+        # Validate input data
+        user_data = UserRegistration(**registration_data)
+
+        # Check if username/email already exists
+        if await user_repository.exists_by_username(user_data.username):
+            raise ValueError("Username already taken")
+
+        if await user_repository.exists_by_email(user_data.email):
+            raise ValueError("Email already registered")
+
+        # Hash password securely
+        password_hash = hash_password(user_data.password)
+
+        # Create user
+        user = await user_repository.create({
+            "username": user_data.username,
+            "email": user_data.email,
+            "password_hash": password_hash,
+            "age": user_data.age
+        })
+
+        logger.info(f"User registered successfully: {user_data.username}")
+        return {"user_id": user.id, "username": user.username}
+
+    except ValueError as e:
+        logger.warning(f"User registration failed: {e}")
+        raise ValidationError(str(e))
+```
+
+### ✅ Good Password Management
+```python
+import secrets
+import hashlib
+import bcrypt
+from typing import tuple
+
+class PasswordManager:
+    """Secure password hashing and verification."""
+
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash password using bcrypt with random salt."""
+        # Generate random salt
+        salt = bcrypt.gensalt(rounds=12)  # Adjust rounds for security/performance balance
+
+        # Hash password with salt
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), salt)
+
+        return password_hash.decode('utf-8')
+
+    @staticmethod
+    def verify_password(password: str, password_hash: str) -> bool:
+        """Verify password against hash."""
+        try:
+            return bcrypt.checkpw(
+                password.encode('utf-8'),
+                password_hash.encode('utf-8')
+            )
+        except Exception as e:
+            logger.error(f"Password verification error: {e}")
+            return False
+
+    @staticmethod
+    def generate_secure_token(length: int = 32) -> str:
+        """Generate cryptographically secure random token."""
+        return secrets.token_urlsafe(length)
+
+    @staticmethod
+    def generate_reset_token() -> tuple[str, str]:
+        """Generate password reset token with hash for storage."""
+        token = secrets.token_urlsafe(32)
+        # Hash the token for storage (prevents token theft from database)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return token, token_hash
+
+# Secure session management
+class SessionManager:
+    """Manage user sessions securely."""
+
+    def __init__(self, redis_client, session_timeout: int = 3600):
+        self.redis = redis_client
+        self.session_timeout = session_timeout
+
+    async def create_session(self, user_id: str, ip_address: str) -> str:
+        """Create new user session."""
+        session_id = secrets.token_urlsafe(32)
+
+        session_data = {
+            "user_id": user_id,
+            "ip_address": ip_address,
+            "created_at": datetime.utcnow().isoformat(),
+            "last_activity": datetime.utcnow().isoformat()
+        }
+
+        # Store session with expiration
+        await self.redis.setex(
+            f"session:{session_id}",
+            self.session_timeout,
+            json.dumps(session_data)
+        )
+
+        logger.info(f"Session created for user {user_id}")
+        return session_id
+
+    async def validate_session(
+        self,
+        session_id: str,
+        ip_address: str
+    ) -> Optional[dict]:
+        """Validate session and check for security issues."""
+        try:
+            session_data_str = await self.redis.get(f"session:{session_id}")
+            if not session_data_str:
+                return None
+
+            session_data = json.loads(session_data_str)
+
+            # Validate IP address (optional: disable for mobile users)
+            if session_data.get("ip_address") != ip_address:
+                logger.warning(
+                    f"IP mismatch for session {session_id}: "
+                    f"expected {session_data['ip_address']}, got {ip_address}"
+                )
+                # Optionally invalidate session or require re-authentication
+                # await self.invalidate_session(session_id)
+                # return None
+
+            # Update last activity
+            session_data["last_activity"] = datetime.utcnow().isoformat()
+            await self.redis.setex(
+                f"session:{session_id}",
+                self.session_timeout,
+                json.dumps(session_data)
+            )
+
+            return session_data
+
+        except Exception as e:
+            logger.error(f"Session validation error: {e}")
+            return None
+
+    async def invalidate_session(self, session_id: str) -> None:
+        """Invalidate user session."""
+        await self.redis.delete(f"session:{session_id}")
+        logger.info(f"Session invalidated: {session_id}")
+```
+
+### ✅ Good SQL Injection Prevention
+```python
+from typing import List, Optional
+import asyncpg
+
+class UserRepository:
+    """Secure database operations using parameterised queries."""
+
+    def __init__(self, db_pool: asyncpg.Pool):
+        self.db_pool = db_pool
+
+    async def find_user_by_email(self, email: str) -> Optional[dict]:
+        """Find user by email using parameterised query."""
+        query = """
+            SELECT id, username, email, created_at
+            FROM users
+            WHERE email = $1 AND active = true
+        """
+
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(query, email)
+
+        if row:
+            return dict(row)
+        return None
+
+    async def search_users(
+        self,
+        search_term: str,
+        limit: int = 50
+    ) -> List[dict]:
+        """Search users with safe text search."""
+        # Sanitise search term
+        search_term = search_term.strip()
+        if len(search_term) < 2:
+            return []
+
+        # Use full-text search with parameterised query
+        query = """
+            SELECT id, username, email, created_at
+            FROM users
+            WHERE (
+                username ILIKE $1
+                OR email ILIKE $1
+            )
+            AND active = true
+            ORDER BY username
+            LIMIT $2
+        """
+
+        search_pattern = f"%{search_term}%"
+
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(query, search_pattern, limit)
+
+        return [dict(row) for row in rows]
+
+    async def update_user_preferences(
+        self,
+        user_id: str,
+        preferences: dict
+    ) -> bool:
+        """Update user preferences with validation."""
+        # Validate preferences structure
+        allowed_keys = {'theme', 'language', 'notifications', 'timezone'}
+        if not all(key in allowed_keys for key in preferences.keys()):
+            raise ValueError("Invalid preference keys")
+
+        # Use JSON parameter for safe data handling
+        query = """
+            UPDATE users
+            SET
+                preferences = $2,
+                updated_at = NOW()
+            WHERE id = $1 AND active = true
+        """
+
+        async with self.db_pool.acquire() as conn:
+            result = await conn.execute(query, user_id, json.dumps(preferences))
+
+        return result == "UPDATE 1"
+```
+
+### ✅ Good API Security
+```python
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+import jwt
+from datetime import datetime, timedelta
+
+app = FastAPI()
+
+# Security middleware
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["api.yourdomain.com", "localhost", "127.0.0.1"]
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://yourdomain.com"],  # Specific origins only
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=3600,
+)
+
+security = HTTPBearer()
+
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials = Security(security)
+) -> dict:
+    """Verify JWT token and return user information."""
+    try:
+        token = credentials.credentials
+
+        # Decode and verify JWT
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+            options={"verify_exp": True}
+        )
+
+        # Additional validation
+        if payload.get("type") != "access_token":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+
+        # Check if user still exists and is active
+        user = await user_repository.get_by_id(payload["user_id"])
+        if not user or not user.active:
+            raise HTTPException(status_code=401, detail="User not found or inactive")
+
+        return payload
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        logger.error(f"Token verification error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+async def require_permission(permission: str):
+    """Dependency to check user permissions."""
+    async def permission_checker(current_user: dict = Depends(verify_token)):
+        user_permissions = await permission_service.get_user_permissions(
+            current_user["user_id"]
+        )
+
+        if permission not in user_permissions:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Permission required: {permission}"
+            )
+
+        return current_user
+
+    return permission_checker
+
+# Secure endpoint example
+@app.post("/api/v1/users/{user_id}/sensitive-action")
+async def sensitive_action(
+    user_id: str,
+    current_user: dict = Depends(require_permission("admin.users.modify"))
+):
+    """Perform sensitive action with proper authorisation."""
+    # Additional validation
+    if current_user["user_id"] != user_id and "admin" not in current_user.get("roles", []):
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot modify other user's data"
+        )
+
+    # Perform action...
+    pass
+```
+
+### ❌ Poor Security Practices
+
+```python
+# Bad: SQL injection vulnerability
+def bad_user_search(search_term: str):
+    query = f"SELECT * FROM users WHERE name LIKE '%{search_term}%'"
+    return database.execute(query)
+
+# Bad: Plain text password storage
+def bad_password_storage(password: str):
+    return hashlib.md5(password.encode()).hexdigest()
+
+# Bad: Hardcoded secrets
+SECRET_KEY = "my-secret-key-123"
+DATABASE_URL = "postgresql://user:password@localhost/db"
+
+# Bad: No input validation
+@app.post("/api/users")
+async def create_user(data: dict):
+    return await user_service.create(data)  # No validation
+
+# Bad: Overly permissive CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows any origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+## Security Checklist
+
+### Development
+- [ ] Input validation on all user data
+- [ ] Parameterised queries for database operations
+- [ ] Secure password hashing (bcrypt/scrypt/Argon2)
+- [ ] Proper session management
+- [ ] HTTPS/TLS for all communications
+- [ ] Environment variables for secrets
+- [ ] Regular dependency security updates
+
+### Deployment
+- [ ] Web Application Firewall (WAF) configured
+- [ ] Rate limiting implemented
+- [ ] Security headers configured
+- [ ] Container security scanning
+- [ ] Network segmentation
+- [ ] Regular security audits
+- [ ] Intrusion detection systems

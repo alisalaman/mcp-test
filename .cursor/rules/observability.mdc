@@ -1,0 +1,822 @@
+---
+description: Logging, monitoring, metrics, and distributed tracing guidelines
+globs: ["**/*.py"]
+tags: ["observability", "monitoring", "logging", "tracing"]
+priority: 9
+alwaysApply: false
+---
+
+# Observability & Monitoring
+
+## Context
+Comprehensive observability strategies including structured logging, metrics collection, distributed tracing, and monitoring to ensure system health and debugging capabilities.
+
+## Guidelines
+
+### Structured Logging
+- **Use structured logging** with consistent format (JSON preferred)
+- **Include correlation IDs** for request tracing across services
+- **Log at appropriate levels** with clear severity guidelines
+- **Avoid logging sensitive information** (PII, secrets, passwords)
+- **Include contextual metadata** for effective filtering and searching
+
+### Metrics & Monitoring
+- **Implement the four golden signals** (latency, traffic, errors, saturation)
+- **Use Prometheus-style metrics** with proper labels and dimensions
+- **Monitor business metrics** alongside technical metrics
+- **Set up meaningful alerts** with appropriate thresholds
+- **Implement health checks** at multiple levels
+
+### Distributed Tracing
+- **Implement distributed tracing** for complex service interactions
+- **Use OpenTelemetry** for standardised instrumentation
+- **Include trace context** in all service calls
+- **Monitor trace sampling** to balance overhead and visibility
+- **Correlate traces with logs and metrics**
+
+### Performance Monitoring
+- **Track response times** with percentiles (p50, p95, p99)
+- **Monitor resource utilisation** (CPU, memory, I/O)
+- **Implement application performance monitoring** (APM)
+- **Track database query performance**
+- **Monitor external service dependencies**
+
+## Examples
+
+### ✅ Good Structured Logging
+```python
+import json
+import logging
+import time
+from typing import Dict, Any, Optional
+from datetime import datetime
+from contextvars import ContextVar
+from uuid import uuid4, UUID
+import structlog
+
+# Context variables for correlation
+correlation_id_var: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
+user_id_var: ContextVar[Optional[str]] = ContextVar('user_id', default=None)
+request_id_var: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
+
+class CorrelationProcessor:
+    """Structlog processor to add correlation context."""
+
+    def __call__(self, logger, method_name, event_dict):
+        # Add correlation IDs from context
+        if correlation_id := correlation_id_var.get():
+            event_dict['correlation_id'] = correlation_id
+
+        if user_id := user_id_var.get():
+            event_dict['user_id'] = user_id
+
+        if request_id := request_id_var.get():
+            event_dict['request_id'] = request_id
+
+        return event_dict
+
+class TimestampProcessor:
+    """Add ISO timestamp to log events."""
+
+    def __call__(self, logger, method_name, event_dict):
+        event_dict['timestamp'] = datetime.utcnow().isoformat() + 'Z'
+        return event_dict
+
+class SensitiveDataFilter:
+    """Filter sensitive data from logs."""
+
+    SENSITIVE_KEYS = {
+        'password', 'token', 'secret', 'key', 'auth',
+        'credit_card', 'ssn', 'email'  # Add more as needed
+    }
+
+    def __call__(self, logger, method_name, event_dict):
+        return self._filter_dict(event_dict)
+
+    def _filter_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively filter sensitive data."""
+        if not isinstance(data, dict):
+            return data
+
+        filtered = {}
+        for key, value in data.items():
+            if any(sensitive in key.lower() for sensitive in self.SENSITIVE_KEYS):
+                filtered[key] = '[REDACTED]'
+            elif isinstance(value, dict):
+                filtered[key] = self._filter_dict(value)
+            elif isinstance(value, list):
+                filtered[key] = [
+                    self._filter_dict(item) if isinstance(item, dict) else item
+                    for item in value
+                ]
+            else:
+                filtered[key] = value
+
+        return filtered
+
+# Configure structlog
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        CorrelationProcessor(),
+        TimestampProcessor(),
+        SensitiveDataFilter(),
+        structlog.processors.add_log_level,
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.ConsoleRenderer() if DEBUG else structlog.processors.JSONRenderer()
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+# Create logger
+logger = structlog.get_logger()
+
+class LoggingService:
+    """Service for consistent application logging."""
+
+    @staticmethod
+    def set_correlation_context(
+        correlation_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None
+    ) -> str:
+        """Set correlation context for the current execution."""
+        if not correlation_id:
+            correlation_id = str(uuid4())
+
+        correlation_id_var.set(correlation_id)
+        if user_id:
+            user_id_var.set(user_id)
+        if request_id:
+            request_id_var.set(request_id)
+
+        return correlation_id
+
+    @staticmethod
+    def clear_correlation_context() -> None:
+        """Clear correlation context."""
+        correlation_id_var.set(None)
+        user_id_var.set(None)
+        request_id_var.set(None)
+
+    @staticmethod
+    def log_api_request(
+        method: str,
+        path: str,
+        status_code: int,
+        duration_ms: float,
+        request_size: Optional[int] = None,
+        response_size: Optional[int] = None
+    ) -> None:
+        """Log API request with standardised format."""
+        logger.info(
+            "HTTP request completed",
+            method=method,
+            path=path,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            request_size=request_size,
+            response_size=response_size,
+            event_type="http_request"
+        )
+
+    @staticmethod
+    def log_business_event(
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        action: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log business events for analytics."""
+        logger.info(
+            f"{entity_type.title()} {action}",
+            event_type="business_event",
+            business_event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            metadata=metadata or {}
+        )
+
+    @staticmethod
+    def log_external_service_call(
+        service: str,
+        operation: str,
+        success: bool,
+        duration_ms: float,
+        status_code: Optional[int] = None,
+        error: Optional[str] = None
+    ) -> None:
+        """Log external service calls."""
+        level = "info" if success else "warning"
+
+        getattr(logger, level)(
+            f"External service call: {service}.{operation}",
+            event_type="external_service_call",
+            service=service,
+            operation=operation,
+            success=success,
+            duration_ms=duration_ms,
+            status_code=status_code,
+            error=error
+        )
+
+# Usage example
+async def example_service_method(user_id: str, data: Dict[str, Any]):
+    """Example service method with proper logging."""
+
+    # Set correlation context
+    correlation_id = LoggingService.set_correlation_context(
+        user_id=user_id,
+        request_id=str(uuid4())
+    )
+
+    try:
+        logger.info(
+            "Processing user request",
+            operation="process_user_data",
+            data_size=len(str(data))
+        )
+
+        # Simulate processing
+        start_time = time.time()
+
+        # External service call
+        try:
+            result = await external_api_call(data)
+            duration = (time.time() - start_time) * 1000
+
+            LoggingService.log_external_service_call(
+                service="external_api",
+                operation="process_data",
+                success=True,
+                duration_ms=duration,
+                status_code=200
+            )
+
+        except Exception as e:
+            duration = (time.time() - start_time) * 1000
+
+            LoggingService.log_external_service_call(
+                service="external_api",
+                operation="process_data",
+                success=False,
+                duration_ms=duration,
+                error=str(e)
+            )
+            raise
+
+        # Log business event
+        LoggingService.log_business_event(
+            event_type="data_processing",
+            entity_type="user",
+            entity_id=user_id,
+            action="processed",
+            metadata={"result_size": len(str(result))}
+        )
+
+        logger.info(
+            "User request processed successfully",
+            operation="process_user_data",
+            processing_time_ms=(time.time() - start_time) * 1000
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(
+            "Failed to process user request",
+            operation="process_user_data",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True
+        )
+        raise
+
+    finally:
+        LoggingService.clear_correlation_context()
+```
+
+### ✅ Good Metrics Implementation
+```python
+import time
+from typing import Dict, Any, Optional, Callable
+from functools import wraps
+from prometheus_client import (
+    Counter, Histogram, Gauge, Summary, start_http_server
+)
+import asyncio
+
+class ApplicationMetrics:
+    """Centralised application metrics."""
+
+    def __init__(self, service_name: str):
+        self.service_name = service_name
+
+        # HTTP metrics
+        self.http_requests_total = Counter(
+            'http_requests_total',
+            'Total HTTP requests',
+            ['method', 'endpoint', 'status']
+        )
+
+        self.http_request_duration = Histogram(
+            'http_request_duration_seconds',
+            'HTTP request duration',
+            ['method', 'endpoint'],
+            buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+        )
+
+        # Business metrics
+        self.business_operations_total = Counter(
+            'business_operations_total',
+            'Total business operations',
+            ['operation', 'status']
+        )
+
+        self.business_operation_duration = Histogram(
+            'business_operation_duration_seconds',
+            'Business operation duration',
+            ['operation']
+        )
+
+        # External service metrics
+        self.external_service_calls_total = Counter(
+            'external_service_calls_total',
+            'Total external service calls',
+            ['service', 'operation', 'status']
+        )
+
+        self.external_service_duration = Histogram(
+            'external_service_duration_seconds',
+            'External service call duration',
+            ['service', 'operation']
+        )
+
+        # System metrics
+        self.active_connections = Gauge(
+            'active_connections',
+            'Number of active connections'
+        )
+
+        self.cache_operations_total = Counter(
+            'cache_operations_total',
+            'Total cache operations',
+            ['operation', 'result']  # hit, miss, error
+        )
+
+        # Circuit breaker metrics
+        self.circuit_breaker_state = Gauge(
+            'circuit_breaker_state',
+            'Circuit breaker state (0=closed, 1=open, 2=half_open)',
+            ['name']
+        )
+
+        # Database metrics
+        self.database_connections_active = Gauge(
+            'database_connections_active',
+            'Active database connections'
+        )
+
+        self.database_query_duration = Histogram(
+            'database_query_duration_seconds',
+            'Database query duration',
+            ['operation']
+        )
+
+    def track_http_request(self, method: str, endpoint: str, status: int, duration: float):
+        """Track HTTP request metrics."""
+        self.http_requests_total.labels(
+            method=method,
+            endpoint=endpoint,
+            status=str(status)
+        ).inc()
+
+        self.http_request_duration.labels(
+            method=method,
+            endpoint=endpoint
+        ).observe(duration)
+
+    def track_business_operation(self, operation: str, status: str, duration: float):
+        """Track business operation metrics."""
+        self.business_operations_total.labels(
+            operation=operation,
+            status=status
+        ).inc()
+
+        self.business_operation_duration.labels(operation=operation).observe(duration)
+
+    def track_external_service_call(
+        self,
+        service: str,
+        operation: str,
+        status: str,
+        duration: float
+    ):
+        """Track external service call metrics."""
+        self.external_service_calls_total.labels(
+            service=service,
+            operation=operation,
+            status=status
+        ).inc()
+
+        self.external_service_duration.labels(
+            service=service,
+            operation=operation
+        ).observe(duration)
+
+# Global metrics instance
+metrics = ApplicationMetrics("ai_agent_service")
+
+def track_duration(metric_func: Callable):
+    """Decorator to track operation duration."""
+    def decorator(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            start_time = time.time()
+            try:
+                result = await func(*args, **kwargs)
+                duration = time.time() - start_time
+                metric_func("success", duration)
+                return result
+            except Exception as e:
+                duration = time.time() - start_time
+                metric_func("error", duration)
+                raise
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            start_time = time.time()
+            try:
+                result = func(*args, **kwargs)
+                duration = time.time() - start_time
+                metric_func("success", duration)
+                return result
+            except Exception as e:
+                duration = time.time() - start_time
+                metric_func("error", duration)
+                raise
+
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+    return decorator
+
+# Usage examples
+@track_duration(lambda status, duration: metrics.track_business_operation("user_creation", status, duration))
+async def create_user(user_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create user with metrics tracking."""
+    # Business logic here
+    pass
+
+class MetricsMiddleware:
+    """FastAPI middleware for automatic metrics collection."""
+
+    def __init__(self, app, metrics_instance: ApplicationMetrics):
+        self.app = app
+        self.metrics = metrics_instance
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start_time = time.time()
+        status_code = 500  # Default to error
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration = time.time() - start_time
+            method = scope["method"]
+            path = scope["path"]
+
+            self.metrics.track_http_request(method, path, status_code, duration)
+```
+
+### ✅ Good Health Checks
+```python
+from typing import Dict, Any, List, Optional
+from enum import Enum
+import asyncio
+import time
+from dataclasses import dataclass
+
+class HealthStatus(Enum):
+    """Health check status levels."""
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+
+@dataclass
+class HealthCheckResult:
+    """Result of a health check."""
+    name: str
+    status: HealthStatus
+    response_time_ms: float
+    message: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+class HealthChecker:
+    """Comprehensive health checking system."""
+
+    def __init__(self):
+        self.checks: Dict[str, Callable] = {}
+        self.check_results: Dict[str, HealthCheckResult] = {}
+        self.last_check_time: Optional[float] = None
+
+    def register_check(self, name: str, check_func: Callable):
+        """Register a health check function."""
+        self.checks[name] = check_func
+
+    async def run_check(self, name: str) -> HealthCheckResult:
+        """Run a single health check."""
+        if name not in self.checks:
+            return HealthCheckResult(
+                name=name,
+                status=HealthStatus.UNHEALTHY,
+                response_time_ms=0,
+                message=f"Check '{name}' not found"
+            )
+
+        start_time = time.time()
+        try:
+            check_func = self.checks[name]
+
+            # Run check with timeout
+            result = await asyncio.wait_for(check_func(), timeout=10.0)
+
+            response_time_ms = (time.time() - start_time) * 1000
+
+            if isinstance(result, HealthCheckResult):
+                result.response_time_ms = response_time_ms
+                return result
+            elif isinstance(result, bool):
+                return HealthCheckResult(
+                    name=name,
+                    status=HealthStatus.HEALTHY if result else HealthStatus.UNHEALTHY,
+                    response_time_ms=response_time_ms
+                )
+            else:
+                return HealthCheckResult(
+                    name=name,
+                    status=HealthStatus.HEALTHY,
+                    response_time_ms=response_time_ms,
+                    details=result if isinstance(result, dict) else None
+                )
+
+        except asyncio.TimeoutError:
+            response_time_ms = (time.time() - start_time) * 1000
+            return HealthCheckResult(
+                name=name,
+                status=HealthStatus.UNHEALTHY,
+                response_time_ms=response_time_ms,
+                message="Health check timed out"
+            )
+        except Exception as e:
+            response_time_ms = (time.time() - start_time) * 1000
+            return HealthCheckResult(
+                name=name,
+                status=HealthStatus.UNHEALTHY,
+                response_time_ms=response_time_ms,
+                message=str(e)
+            )
+
+    async def run_all_checks(self) -> Dict[str, HealthCheckResult]:
+        """Run all registered health checks."""
+        tasks = [
+            self.run_check(name) for name in self.checks.keys()
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        self.check_results = {}
+        for result in results:
+            if isinstance(result, HealthCheckResult):
+                self.check_results[result.name] = result
+            elif isinstance(result, Exception):
+                # This shouldn't happen with our error handling, but just in case
+                self.check_results["unknown"] = HealthCheckResult(
+                    name="unknown",
+                    status=HealthStatus.UNHEALTHY,
+                    response_time_ms=0,
+                    message=str(result)
+                )
+
+        self.last_check_time = time.time()
+        return self.check_results
+
+    def get_overall_status(self) -> HealthStatus:
+        """Get overall system health status."""
+        if not self.check_results:
+            return HealthStatus.UNHEALTHY
+
+        statuses = [result.status for result in self.check_results.values()]
+
+        if all(status == HealthStatus.HEALTHY for status in statuses):
+            return HealthStatus.HEALTHY
+        elif any(status == HealthStatus.UNHEALTHY for status in statuses):
+            return HealthStatus.UNHEALTHY
+        else:
+            return HealthStatus.DEGRADED
+
+    def get_health_summary(self) -> Dict[str, Any]:
+        """Get comprehensive health summary."""
+        overall_status = self.get_overall_status()
+
+        return {
+            "status": overall_status.value,
+            "timestamp": self.last_check_time,
+            "checks": {
+                name: {
+                    "status": result.status.value,
+                    "response_time_ms": result.response_time_ms,
+                    "message": result.message,
+                    "details": result.details
+                }
+                for name, result in self.check_results.items()
+            },
+            "summary": {
+                "total_checks": len(self.check_results),
+                "healthy_checks": len([
+                    r for r in self.check_results.values()
+                    if r.status == HealthStatus.HEALTHY
+                ]),
+                "unhealthy_checks": len([
+                    r for r in self.check_results.values()
+                    if r.status == HealthStatus.UNHEALTHY
+                ])
+            }
+        }
+
+# Specific health check implementations
+async def database_health_check() -> HealthCheckResult:
+    """Check database connectivity and performance."""
+    try:
+        start_time = time.time()
+
+        # Simple connectivity test
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+
+        query_time = (time.time() - start_time) * 1000
+
+        # Check connection pool health
+        pool_size = db_pool.get_size()
+        idle_connections = db_pool.get_idle_size()
+
+        if query_time > 1000:  # > 1 second
+            status = HealthStatus.DEGRADED
+            message = f"Database responding slowly ({query_time:.2f}ms)"
+        elif idle_connections < 2:  # Low on connections
+            status = HealthStatus.DEGRADED
+            message = f"Database connection pool under pressure ({idle_connections} idle)"
+        else:
+            status = HealthStatus.HEALTHY
+            message = None
+
+        return HealthCheckResult(
+            name="database",
+            status=status,
+            response_time_ms=query_time,
+            message=message,
+            details={
+                "pool_size": pool_size,
+                "idle_connections": idle_connections,
+                "query_time_ms": query_time
+            }
+        )
+
+    except Exception as e:
+        return HealthCheckResult(
+            name="database",
+            status=HealthStatus.UNHEALTHY,
+            response_time_ms=0,
+            message=f"Database connection failed: {str(e)}"
+        )
+
+async def redis_health_check() -> HealthCheckResult:
+    """Check Redis connectivity and performance."""
+    try:
+        start_time = time.time()
+
+        # Test basic operations
+        await redis_client.ping()
+        await redis_client.set("health_check", "test", ex=60)
+        value = await redis_client.get("health_check")
+
+        response_time = (time.time() - start_time) * 1000
+
+        if value != b"test":
+            return HealthCheckResult(
+                name="redis",
+                status=HealthStatus.UNHEALTHY,
+                response_time_ms=response_time,
+                message="Redis read/write test failed"
+            )
+
+        # Check memory usage
+        info = await redis_client.info("memory")
+        memory_usage = info.get("used_memory_rss", 0)
+        max_memory = info.get("maxmemory", 0)
+
+        status = HealthStatus.HEALTHY
+        message = None
+
+        if max_memory > 0 and memory_usage / max_memory > 0.9:
+            status = HealthStatus.DEGRADED
+            message = f"Redis memory usage high ({memory_usage / max_memory:.1%})"
+        elif response_time > 100:  # > 100ms
+            status = HealthStatus.DEGRADED
+            message = f"Redis responding slowly ({response_time:.2f}ms)"
+
+        return HealthCheckResult(
+            name="redis",
+            status=status,
+            response_time_ms=response_time,
+            message=message,
+            details={
+                "memory_usage_bytes": memory_usage,
+                "max_memory_bytes": max_memory,
+                "memory_usage_percent": memory_usage / max_memory if max_memory > 0 else 0
+            }
+        )
+
+    except Exception as e:
+        return HealthCheckResult(
+            name="redis",
+            status=HealthStatus.UNHEALTHY,
+            response_time_ms=0,
+            message=f"Redis connection failed: {str(e)}"
+        )
+
+# Initialize health checker
+health_checker = HealthChecker()
+health_checker.register_check("database", database_health_check)
+health_checker.register_check("redis", redis_health_check)
+
+# FastAPI endpoints
+@app.get("/health")
+async def health_endpoint():
+    """Quick health check endpoint."""
+    await health_checker.run_all_checks()
+    status = health_checker.get_overall_status()
+
+    return {
+        "status": status.value,
+        "timestamp": time.time()
+    }
+
+@app.get("/health/detailed")
+async def detailed_health_endpoint():
+    """Detailed health check endpoint."""
+    await health_checker.run_all_checks()
+    return health_checker.get_health_summary()
+```
+
+### ❌ Poor Observability Practices
+
+```python
+# Bad: No structured logging
+def bad_logging():
+    print("Something happened")  # No context, level, or structure
+    logging.info(f"User {user_id} did something")  # String formatting, no structure
+
+# Bad: No correlation IDs
+async def bad_service_call():
+    result = await external_service()  # No way to trace this call
+    return result
+
+# Bad: No metrics
+async def bad_api_endpoint():
+    # No tracking of performance, errors, or usage
+    return await process_request()
+
+# Bad: No error context
+try:
+    result = risky_operation()
+except:
+    logger.error("Something failed")  # No details about what or why
+```
+
+## Alerting Strategy
+
+### Alert Levels
+- **Critical**: Service down, data loss, security breach
+- **Warning**: Performance degradation, high error rates
+- **Info**: Capacity thresholds, maintenance events
+
+### Key Alerts
+- HTTP error rate > 5%
+- Response time p95 > 2 seconds
+- Database connection pool > 80% utilisation
+- Circuit breaker trips
+- Memory usage > 85%
+- Disk space < 20%

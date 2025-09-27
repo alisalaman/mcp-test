@@ -1,0 +1,617 @@
+---
+description: Scalability patterns and performance optimisation strategies
+globs: ["**/*.py"]
+tags: ["scalability", "performance", "architecture"]
+priority: 7
+alwaysApply: false
+---
+
+# Scalability & Performance
+
+## Context
+Design patterns and strategies for building applications that can handle increased load, scale horizontally, and maintain performance under various conditions.
+
+## Guidelines
+
+### Horizontal Scaling Principles
+- **Design stateless services** that can be easily replicated
+- **Use external storage** for session state (Redis, databases)
+- **Implement proper load balancing** strategies
+- **Design for eventual consistency** where appropriate
+- **Use message queues** for asynchronous processing
+
+### Caching Strategies
+- **Implement multi-layer caching** (in-memory, Redis, CDN)
+- **Use appropriate cache invalidation** strategies
+- **Consider cache warming** for critical data
+- **Monitor cache hit rates** and effectiveness
+- **Implement cache-aside patterns** for data consistency
+
+### Database Scaling
+- **Use connection pooling** to manage database connections
+- **Implement read replicas** for read-heavy workloads
+- **Consider database sharding** for very large datasets
+- **Optimise queries** and use proper indexing
+- **Implement database monitoring** and query analysis
+
+### Resource Management
+- **Use async I/O** for concurrent operations
+- **Implement proper resource cleanup** with context managers
+- **Monitor memory usage** and implement memory-efficient algorithms
+- **Use streaming** for large data processing
+- **Implement backpressure** in data pipelines
+
+## Examples
+
+### ✅ Good Caching Implementation
+```python
+import asyncio
+import json
+from typing import Optional, Any, Union
+from dataclasses import dataclass
+from enum import Enum
+import aioredis
+import logging
+
+logger = logging.getLogger(__name__)
+
+class CacheStrategy(Enum):
+    """Cache strategies for different data types."""
+    WRITE_THROUGH = "write_through"
+    WRITE_BEHIND = "write_behind"
+    CACHE_ASIDE = "cache_aside"
+    REFRESH_AHEAD = "refresh_ahead"
+
+@dataclass
+class CacheConfig:
+    """Configuration for cache behaviour."""
+    ttl: int = 3600  # Time to live in seconds
+    strategy: CacheStrategy = CacheStrategy.CACHE_ASIDE
+    max_retries: int = 3
+    retry_delay: float = 0.1
+
+class MultiLayerCache:
+    """Multi-layer cache with in-memory and Redis backing."""
+
+    def __init__(
+        self,
+        redis_client: aioredis.Redis,
+        max_memory_items: int = 1000
+    ):
+        self.redis = redis_client
+        self.memory_cache: dict = {}
+        self.max_memory_items = max_memory_items
+        self.access_order = []  # For LRU eviction
+
+    async def get(
+        self,
+        key: str,
+        fetch_func: Optional[callable] = None,
+        config: CacheConfig = CacheConfig()
+    ) -> Optional[Any]:
+        """Get value from cache with fallback to fetch function."""
+
+        # Try memory cache first
+        if key in self.memory_cache:
+            self._update_access_order(key)
+            logger.debug(f"Cache hit (memory): {key}")
+            return self.memory_cache[key]
+
+        # Try Redis cache
+        try:
+            cached_value = await self.redis.get(key)
+            if cached_value:
+                value = json.loads(cached_value)
+                # Store in memory cache
+                await self._set_memory(key, value)
+                logger.debug(f"Cache hit (Redis): {key}")
+                return value
+        except Exception as e:
+            logger.warning(f"Redis cache error for key {key}: {e}")
+
+        # Cache miss - use fetch function if provided
+        if fetch_func:
+            try:
+                value = await fetch_func()
+                if value is not None:
+                    await self.set(key, value, config)
+                    logger.debug(f"Cache miss, fetched: {key}")
+                return value
+            except Exception as e:
+                logger.error(f"Fetch function failed for key {key}: {e}")
+                return None
+
+        logger.debug(f"Cache miss: {key}")
+        return None
+
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        config: CacheConfig = CacheConfig()
+    ) -> None:
+        """Set value in cache with specified strategy."""
+
+        if config.strategy == CacheStrategy.WRITE_THROUGH:
+            # Write to both caches synchronously
+            await self._set_memory(key, value)
+            await self._set_redis(key, value, config.ttl)
+
+        elif config.strategy == CacheStrategy.WRITE_BEHIND:
+            # Write to memory immediately, Redis asynchronously
+            await self._set_memory(key, value)
+            asyncio.create_task(self._set_redis(key, value, config.ttl))
+
+        else:  # CACHE_ASIDE
+            # Application manages cache
+            await self._set_memory(key, value)
+            await self._set_redis(key, value, config.ttl)
+
+    async def _set_memory(self, key: str, value: Any) -> None:
+        """Set value in memory cache with LRU eviction."""
+        if key in self.memory_cache:
+            self._update_access_order(key)
+        else:
+            # Check if we need to evict
+            if len(self.memory_cache) >= self.max_memory_items:
+                # Remove least recently used
+                lru_key = self.access_order.pop(0)
+                del self.memory_cache[lru_key]
+
+            self.access_order.append(key)
+
+        self.memory_cache[key] = value
+
+    async def _set_redis(self, key: str, value: Any, ttl: int) -> None:
+        """Set value in Redis with retry logic."""
+        for attempt in range(3):
+            try:
+                await self.redis.setex(key, ttl, json.dumps(value))
+                return
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    logger.error(f"Failed to set Redis cache for {key}: {e}")
+                else:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+
+    def _update_access_order(self, key: str) -> None:
+        """Update LRU access order."""
+        if key in self.access_order:
+            self.access_order.remove(key)
+        self.access_order.append(key)
+
+# Usage example
+async def get_user_profile(user_id: str, cache: MultiLayerCache) -> dict:
+    """Get user profile with caching."""
+
+    async def fetch_from_database():
+        # Simulate database fetch
+        return await user_repository.get_by_id(user_id)
+
+    cache_key = f"user_profile:{user_id}"
+    config = CacheConfig(ttl=1800, strategy=CacheStrategy.CACHE_ASIDE)
+
+    return await cache.get(cache_key, fetch_from_database, config)
+```
+
+### ✅ Good Connection Pooling
+```python
+import asyncpg
+import aioredis
+from typing import Optional
+from contextlib import asynccontextmanager
+import logging
+
+logger = logging.getLogger(__name__)
+
+class DatabasePool:
+    """Managed database connection pool with health monitoring."""
+
+    def __init__(self):
+        self.pool: Optional[asyncpg.Pool] = None
+        self.health_check_interval = 30
+        self._health_check_task: Optional[asyncio.Task] = None
+
+    async def initialize(
+        self,
+        database_url: str,
+        min_size: int = 5,
+        max_size: int = 20,
+        command_timeout: int = 60,
+        server_settings: Optional[dict] = None
+    ) -> None:
+        """Initialize connection pool with optimised settings."""
+
+        self.pool = await asyncpg.create_pool(
+            database_url,
+            min_size=min_size,
+            max_size=max_size,
+            command_timeout=command_timeout,
+            server_settings=server_settings or {
+                'application_name': 'ai_agent_app',
+                'jit': 'off',  # Disable JIT for short queries
+            },
+            setup=self._setup_connection
+        )
+
+        # Start health monitoring
+        self._health_check_task = asyncio.create_task(
+            self._periodic_health_check()
+        )
+
+        logger.info(f"Database pool initialized: {min_size}-{max_size} connections")
+
+    async def _setup_connection(self, connection: asyncpg.Connection) -> None:
+        """Setup individual database connections."""
+        # Set connection-specific settings
+        await connection.execute("SET TIME ZONE 'UTC'")
+        await connection.execute("SET statement_timeout = '30s'")
+
+        # Register custom types if needed
+        # await connection.set_type_codec(...)
+
+    @asynccontextmanager
+    async def acquire(self):
+        """Acquire connection from pool with proper error handling."""
+        if not self.pool:
+            raise RuntimeError("Database pool not initialized")
+
+        connection = None
+        try:
+            # Acquire with timeout
+            connection = await asyncio.wait_for(
+                self.pool.acquire(),
+                timeout=5.0
+            )
+            yield connection
+        except asyncio.TimeoutError:
+            logger.error("Database connection acquisition timeout")
+            raise
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+        finally:
+            if connection:
+                await self.pool.release(connection)
+
+    async def execute_query(
+        self,
+        query: str,
+        *args,
+        timeout: Optional[float] = None
+    ) -> Any:
+        """Execute query with connection management."""
+        async with self.acquire() as conn:
+            try:
+                return await asyncio.wait_for(
+                    conn.fetch(query, *args),
+                    timeout=timeout or 30.0
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Query timeout: {query[:100]}...")
+                raise
+
+    async def _periodic_health_check(self) -> None:
+        """Periodically check pool health."""
+        while True:
+            try:
+                await asyncio.sleep(self.health_check_interval)
+
+                if self.pool:
+                    # Check pool statistics
+                    size = self.pool.get_size()
+                    idle = self.pool.get_idle_size()
+
+                    logger.debug(
+                        f"Database pool health: {size} total, {idle} idle"
+                    )
+
+                    # Perform health check query
+                    async with self.acquire() as conn:
+                        await conn.execute("SELECT 1")
+
+            except Exception as e:
+                logger.error(f"Database health check failed: {e}")
+
+    async def close(self) -> None:
+        """Close database pool."""
+        if self._health_check_task:
+            self._health_check_task.cancel()
+
+        if self.pool:
+            await self.pool.close()
+            logger.info("Database pool closed")
+
+# Redis connection pool
+class RedisPool:
+    """Managed Redis connection pool."""
+
+    def __init__(self):
+        self.pool: Optional[aioredis.ConnectionPool] = None
+        self.redis: Optional[aioredis.Redis] = None
+
+    async def initialize(
+        self,
+        redis_url: str,
+        max_connections: int = 20,
+        socket_timeout: int = 5,
+        socket_connect_timeout: int = 5
+    ) -> None:
+        """Initialize Redis connection pool."""
+
+        self.pool = aioredis.ConnectionPool.from_url(
+            redis_url,
+            max_connections=max_connections,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
+            health_check_interval=30,
+            retry_on_timeout=True
+        )
+
+        self.redis = aioredis.Redis(connection_pool=self.pool)
+
+        # Test connection
+        await self.redis.ping()
+        logger.info(f"Redis pool initialized: {max_connections} max connections")
+
+    async def close(self) -> None:
+        """Close Redis pool."""
+        if self.redis:
+            await self.redis.close()
+        if self.pool:
+            await self.pool.disconnect()
+        logger.info("Redis pool closed")
+
+# Global pool instances
+db_pool = DatabasePool()
+redis_pool = RedisPool()
+```
+
+### ✅ Good Streaming for Large Data
+```python
+import asyncio
+from typing import AsyncGenerator, AsyncIterator, List, Any
+import aiofiles
+import orjson
+import logging
+
+logger = logging.getLogger(__name__)
+
+class StreamProcessor:
+    """Process large datasets using streaming patterns."""
+
+    @staticmethod
+    async def process_large_file(
+        file_path: str,
+        chunk_size: int = 8192,
+        batch_size: int = 1000
+    ) -> AsyncGenerator[List[dict], None]:
+        """Stream and process large JSON files in batches."""
+
+        batch = []
+
+        try:
+            async with aiofiles.open(file_path, 'rb') as file:
+                buffer = b""
+
+                async for chunk in StreamProcessor._read_chunks(file, chunk_size):
+                    buffer += chunk
+
+                    # Process complete JSON objects
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+
+                        if line.strip():
+                            try:
+                                record = orjson.loads(line)
+                                batch.append(record)
+
+                                # Yield batch when full
+                                if len(batch) >= batch_size:
+                                    yield batch
+                                    batch = []
+
+                            except orjson.JSONDecodeError as e:
+                                logger.warning(f"Invalid JSON line: {e}")
+                                continue
+
+                # Process remaining buffer
+                if buffer.strip():
+                    try:
+                        record = orjson.loads(buffer)
+                        batch.append(record)
+                    except orjson.JSONDecodeError:
+                        pass
+
+                # Yield final batch
+                if batch:
+                    yield batch
+
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
+            raise
+
+    @staticmethod
+    async def _read_chunks(
+        file: aiofiles.threadpool.text.AsyncTextIOWrapper,
+        chunk_size: int
+    ) -> AsyncGenerator[bytes, None]:
+        """Read file in chunks asynchronously."""
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+    @staticmethod
+    async def stream_database_results(
+        query: str,
+        connection,
+        batch_size: int = 1000
+    ) -> AsyncGenerator[List[dict], None]:
+        """Stream large database result sets."""
+
+        async with connection.transaction():
+            # Use server-side cursor for large results
+            async for batch in connection.cursor(query).batches(batch_size):
+                yield [dict(record) for record in batch]
+
+# Usage example
+async def process_user_analytics():
+    """Process large user analytics dataset."""
+
+    async def process_batch(batch: List[dict]) -> None:
+        """Process a batch of records."""
+        # Transform data
+        processed = []
+        for record in batch:
+            # Apply business logic
+            transformed = transform_record(record)
+            if transformed:
+                processed.append(transformed)
+
+        # Bulk insert to database
+        if processed:
+            await bulk_insert_analytics(processed)
+
+    # Process file in streaming fashion
+    async for batch in StreamProcessor.process_large_file(
+        "user_events.jsonl",
+        chunk_size=16384,
+        batch_size=500
+    ):
+        await process_batch(batch)
+
+        # Yield control to allow other operations
+        await asyncio.sleep(0)
+
+# Backpressure implementation
+class BackpressureQueue:
+    """Queue with backpressure to prevent memory overflow."""
+
+    def __init__(self, max_size: int = 1000, high_water_mark: int = 800):
+        self.queue = asyncio.Queue(maxsize=max_size)
+        self.high_water_mark = high_water_mark
+        self.processing_semaphore = asyncio.Semaphore(max_size)
+
+    async def put(self, item: Any) -> None:
+        """Put item with backpressure."""
+        # Check if queue is near capacity
+        if self.queue.qsize() > self.high_water_mark:
+            logger.warning(f"Queue approaching capacity: {self.queue.qsize()}")
+
+            # Apply backpressure by slowing down producers
+            await asyncio.sleep(0.1)
+
+        await self.queue.put(item)
+
+    async def get(self) -> Any:
+        """Get item from queue."""
+        return await self.queue.get()
+
+    def task_done(self) -> None:
+        """Mark task as done."""
+        self.queue.task_done()
+```
+
+### ❌ Poor Scalability Patterns
+
+```python
+# Bad: No connection pooling
+async def bad_database_usage():
+    for i in range(1000):
+        conn = await asyncpg.connect(DATABASE_URL)  # New connection each time
+        result = await conn.fetch("SELECT * FROM users WHERE id = $1", i)
+        await conn.close()
+
+# Bad: Loading entire dataset into memory
+def bad_large_data_processing():
+    with open("huge_file.json") as f:
+        data = json.load(f)  # Loads entire file into memory
+
+    for record in data:
+        process_record(record)
+
+# Bad: No caching
+async def bad_repeated_computation():
+    for user_id in user_ids:
+        # Expensive computation repeated for each call
+        result = await expensive_api_call(user_id)
+        process_result(result)
+```
+
+## Performance Monitoring
+
+### Metrics to Track
+- **Response times** (p50, p95, p99)
+- **Throughput** (requests per second)
+- **Resource utilisation** (CPU, memory, I/O)
+- **Cache hit rates**
+- **Database connection pool usage**
+- **Queue depths and processing times**
+
+### Load Testing
+```python
+import asyncio
+import aiohttp
+import time
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class LoadTestResult:
+    """Load test results."""
+    total_requests: int
+    successful_requests: int
+    failed_requests: int
+    average_response_time: float
+    requests_per_second: float
+
+async def load_test_endpoint(
+    url: str,
+    concurrent_users: int = 10,
+    requests_per_user: int = 100,
+    timeout: int = 30
+) -> LoadTestResult:
+    """Simple load test for API endpoints."""
+
+    results = []
+    start_time = time.time()
+
+    async def make_requests(session: aiohttp.ClientSession, user_id: int):
+        """Make requests for a single user."""
+        for i in range(requests_per_user):
+            request_start = time.time()
+            try:
+                async with session.get(url, timeout=timeout) as response:
+                    await response.text()
+                    request_time = time.time() - request_start
+                    results.append(('success', request_time))
+            except Exception as e:
+                request_time = time.time() - request_start
+                results.append(('error', request_time))
+
+            # Small delay between requests
+            await asyncio.sleep(0.01)
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [
+            make_requests(session, user_id)
+            for user_id in range(concurrent_users)
+        ]
+        await asyncio.gather(*tasks)
+
+    total_time = time.time() - start_time
+    successful = len([r for r in results if r[0] == 'success'])
+    failed = len([r for r in results if r[0] == 'error'])
+    avg_response_time = sum(r[1] for r in results) / len(results)
+    rps = len(results) / total_time
+
+    return LoadTestResult(
+        total_requests=len(results),
+        successful_requests=successful,
+        failed_requests=failed,
+        average_response_time=avg_response_time,
+        requests_per_second=rps
+    )
+```

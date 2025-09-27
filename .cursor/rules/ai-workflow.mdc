@@ -1,0 +1,107 @@
+---
+description: Workflow guidelines optimised for AI-assisted development with Cursor
+globs: ["**/*.py"]
+tags: ["workflow", "ai", "cursor"]
+priority: 2
+alwaysApply: true
+---
+
+# AI-Assisted Development Workflow
+
+## Context
+Guidelines for working effectively with Cursor's AI assistance, emphasising clear communication with the AI and systematic problem-solving approaches.
+
+## AI Collaboration Principles
+
+### Communicate Context Clearly
+- **Describe the problem thoroughly** in your prompts to the AI
+- **Explain the broader system context** and how this component fits
+- **Specify constraints** (performance, security, compatibility requirements)
+- **Mention existing patterns** or architectural decisions to follow
+- **State your experience level** with relevant technologies
+
+### Iterative Development with AI
+- **Start with high-level design** conversations before implementation
+- **Ask for alternatives** and trade-off analysis
+- **Request code reviews** and improvement suggestions
+- **Use AI for refactoring** and optimisation suggestions
+- **Collaborate on test cases** and edge case identification
+
+### Effective Prompting Strategies
+- **Be specific about output format** (class, function, module structure)
+- **Request explanations** alongside code generation
+- **Ask for multiple approaches** when solving complex problems
+- **Use AI for documentation** and comment generation
+- **Leverage AI for debugging** and error analysis
+
+## Development Workflow
+
+### 1. ANALYSE with AI
+- **Prompt**: "Help me understand this requirement: [describe problem]"
+- **Explore**: Ask AI about similar patterns, potential approaches
+- **Validate**: Confirm understanding with AI before proceeding
+- **Research**: Use AI to explain unfamiliar concepts or technologies
+
+### 2. DESIGN with AI
+- **Prompt**: "Design a solution for [problem] that considers [constraints]"
+- **Evaluate**: Ask AI to compare different architectural approaches
+- **Plan**: Have AI help break down complex tasks into smaller steps
+- **Review**: Use AI to identify potential issues or improvements
+
+### 3. IMPLEMENT with AI
+- **Generate**: Use AI to create initial code structure and boilerplate
+- **Iterate**: Refine implementation through AI-assisted modifications
+- **Document**: Have AI help write docstrings and comments
+- **Optimise**: Ask AI for performance and readability improvements
+
+### 4. VALIDATE with AI
+- **Test**: Use AI to generate comprehensive test cases
+- **Review**: Ask AI to review code for potential issues
+- **Debug**: Collaborate with AI to diagnose and fix problems
+- **Refactor**: Use AI suggestions for code improvement
+
+## Examples
+
+### ✅ Good AI Collaboration
+```markdown
+Prompt: "I need to implement a retry mechanism for API calls in a Python
+microservice. The service uses httpx for HTTP requests and needs to handle
+rate limiting (429), temporary failures (5xx), but not auth errors (401/403).
+The retry should use exponential backoff with jitter. Please design a
+decorator that can be applied to async functions."
+
+Follow-up: "Can you also show me how to make this configurable and add
+proper logging for observability?"
+```
+
+### ❌ Poor AI Collaboration
+```markdown
+Prompt: "Write code for retries"
+```
+
+### ✅ Good Implementation Flow
+1. **Analyse**: "Explain the requirements and constraints for this feature"
+2. **Design**: "Show me 2-3 different approaches and their trade-offs"
+3. **Implement**: "Create the solution using approach 2, with proper error handling"
+4. **Validate**: "Generate tests for this implementation, including edge cases"
+
+### ❌ Poor Implementation Flow
+1. Jump straight to asking for code without context
+2. Accept first solution without exploring alternatives
+3. Skip validation and testing discussion
+
+## AI-Assisted Code Quality
+
+### Use AI for:
+- **Code reviews**: "Review this code for potential issues and improvements"
+- **Performance analysis**: "Identify performance bottlenecks in this code"
+- **Security checks**: "Check this code for security vulnerabilities"
+- **Documentation**: "Generate comprehensive docstrings for these functions"
+- **Refactoring**: "Refactor this code to follow SOLID principles"
+
+### Maintain Human Oversight
+- **Understand generated code** before accepting it
+- **Verify AI suggestions** against your requirements
+- **Test thoroughly** - AI can miss edge cases
+- **Review for style consistency** with your codebase
+- **Ensure security best practices** are followed

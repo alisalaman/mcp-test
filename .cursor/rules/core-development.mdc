@@ -1,0 +1,92 @@
+---
+description: Core Python development principles and standards
+globs: ["**/*.py"]
+tags: ["python", "standards", "core"]
+priority: 1
+alwaysApply: false
+---
+
+# Core Python Development Principles
+
+## Context
+Universal principles for writing high-quality Python code that emphasises readability, maintainability, and robustness.
+
+## Guidelines
+
+### Modern Python Standards
+- Use Python 3.9+ features (walrus operator, type unions with |, match/case)
+- Follow PEP 8 with 88-100 character line length
+- Implement comprehensive type hints for all public interfaces
+- Use dataclasses, enums, and Protocol for structured data
+- Leverage pathlib for file operations instead of os.path
+
+### Clean Code Principles
+- Follow SOLID principles (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion)
+- Apply DRY (Don't Repeat Yourself) and KISS (Keep It Simple, Stupid)
+- Write self-documenting code with meaningful names
+- Favour explicit over implicit behaviour
+- Use composition over inheritance when possible
+
+### Function Design
+- Keep functions small and focussed (prefer <20 lines)
+- Use descriptive parameter and variable names
+- Return early to reduce nesting levels
+- Implement single responsibility per function
+- Handle edge cases explicitly
+
+## Examples
+
+### ✅ Good Example
+```python
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+@dataclass
+class User:
+    name: str
+    email: str
+    age: int
+
+class EmailValidator(Protocol):
+    def validate(self, email: str) -> bool: ...
+
+def create_user_profile(
+    name: str,
+    email: str,
+    age: int,
+    validator: EmailValidator
+) -> User | None:
+    """Create a user profile with validation.
+
+    Args:
+        name: User's full name
+        email: User's email address
+        age: User's age in years
+        validator: Email validation service
+
+    Returns:
+        User instance if valid, None otherwise
+    """
+    if not validator.validate(email):
+        return None
+
+    if age < 0:
+        return None
+
+    return User(name=name, email=email, age=age)
+```
+
+### ❌ Poor Example
+```python
+def create_user(n, e, a):
+    if "@" in e and a > 0:
+        return {"name": n, "email": e, "age": a}
+    else:
+        return None
+```
+
+## British English
+- Use British spelling: colour, behaviour, centre, realise, optimise
+- Follow British conventions in documentation and comments
+- Use consistent terminology throughout the codebase
