@@ -2,6 +2,78 @@
 
 This guide walks you through setting up the Phase 2 Infrastructure Layer components.
 
+## Using This Repository as a Template
+
+This repository is designed to be used as a template for creating new AI agent backend projects. Here are the recommended approaches:
+
+### Method 1: GitHub Template (Recommended)
+
+If this repository is on GitHub:
+
+1. **Make it a template repository** (if you own the repo):
+   - Go to Settings → General
+   - Check "Template repository"
+   - Save changes
+
+2. **Create new project**:
+   - Click "Use this template" button
+   - Choose "Create a new repository"
+   - Name your new project
+   - Clone the new repository
+
+### Method 2: Manual Clone and Setup
+
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url> my-new-ai-project
+   cd my-new-ai-project
+   ```
+
+2. **Clean up for new project**:
+   ```bash
+   # Remove old git history and initialize new repository
+   rm -rf .git
+   git init
+   git add .
+   git commit -m "Initial commit: AI agent backend template"
+
+   # Add your remote repository
+   git remote add origin <your-new-repo-url>
+   git push -u origin main
+   ```
+
+3. **Customize project information**:
+   - Update `README.md` with your project name and description
+   - Modify `pyproject.toml` with your project metadata
+   - Update environment files as needed
+   - Customize API endpoints and business logic for your use case
+
+### Method 3: Using GitHub CLI
+
+```bash
+# Create a new repository from template
+gh repo create my-new-ai-project --template ai-agent-backend-starter
+
+# Clone your new repository
+git clone https://github.com/yourusername/my-new-ai-project
+cd my-new-ai-project
+```
+
+### Template Customization Checklist
+
+After creating your new project from this template:
+
+- [ ] Update project name and description in README files
+- [ ] Modify `pyproject.toml` with your project metadata
+- [ ] Configure environment variables for your use case
+- [ ] Update API endpoints to match your requirements
+- [ ] Customize AI agent behaviors and workflows
+- [ ] Configure external service integrations
+- [ ] Set up your preferred database and caching solutions
+- [ ] Update security settings and authentication
+- [ ] Configure monitoring and observability
+- [ ] Set up CI/CD pipelines for your deployment
+
 ## Prerequisites
 
 - Python 3.13+ (required - check with `python3 --version`)
@@ -427,3 +499,58 @@ python examples/phase2_demo.py
 ```
 
 That's it! You now have a working Phase 2 infrastructure layer.
+
+## Template Usage Quick Reference
+
+### For New Projects from Template
+
+If you're setting up a new project created from this template:
+
+1. **Start with the template setup** (see "Using This Repository as a Template" section above)
+2. **Follow the Quick Start Summary** below
+3. **Customize for your specific use case** using the Template Customization Checklist
+
+### Quick Start Summary
+
+For the fastest setup to get Phase 2 working:
+
+```bash
+# 1. Install UV (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Set up Python environment
+cd ai-agent-app
+uv venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+uv sync
+
+# 4. Create basic environment (or copy the template)
+cp env-templates/env.development .env
+
+# 5. Test setup
+python examples/phase2_demo.py
+```
+
+### Template Features Overview
+
+This template provides:
+
+✅ **Production-ready architecture** with layered design
+✅ **Comprehensive error handling** and resilience patterns
+✅ **Real-time capabilities** with WebSocket support
+✅ **Multiple storage backends** (PostgreSQL, Redis, in-memory)
+✅ **Observability** with logging, metrics, and tracing
+✅ **Security** with authentication and authorization
+✅ **Testing framework** with unit, integration, and e2e tests
+✅ **Docker support** for easy deployment
+✅ **API documentation** with automatic OpenAPI generation
+
+### Next Steps After Template Setup
+
+1. **Verify the demo works**: `python examples/phase2_demo.py`
+2. **Customize the application** for your specific needs
+3. **Set up external services** (PostgreSQL, Redis, LLM providers)
+4. **Configure production settings** for deployment
+5. **Add your business logic** and domain-specific features
