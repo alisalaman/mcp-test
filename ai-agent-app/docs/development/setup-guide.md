@@ -4,9 +4,38 @@ This guide walks you through setting up the Phase 2 Infrastructure Layer compone
 
 ## Prerequisites
 
-- Python 3.12+
-- UV package manager (recommended) or pip
+- Python 3.13+ (required - check with `python3 --version`)
+- UV package manager (install with: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Optional: PostgreSQL and Redis for full functionality
+
+## 0. Python Environment Setup
+
+### Install UV Package Manager
+
+If you don't have UV installed:
+
+```bash
+# Install UV (fastest Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Verify installation
+uv --version
+```
+
+### Create Virtual Environment
+
+```bash
+cd ai-agent-app
+
+# Create virtual environment with Python 3.13+
+uv venv
+
+# Activate virtual environment
+# On macOS/Linux:
+source .venv/bin/activate
+# On Windows:
+# .venv\Scripts\activate
+```
 
 ## 1. Install Dependencies
 
@@ -15,12 +44,10 @@ This guide walks you through setting up the Phase 2 Infrastructure Layer compone
 For Phase 2, you need the core dependencies:
 
 ```bash
-cd ai-agent-app
-
-# Install core dependencies
+# Install core dependencies (after activating venv)
 uv sync
 
-# Or with pip
+# Or with pip (not recommended)
 pip install -e .
 ```
 
@@ -31,9 +58,6 @@ For full Phase 2 functionality (PostgreSQL + Redis):
 ```bash
 # Install Phase 2 specific dependencies
 uv add asyncpg redis[hiredis] structlog
-
-# Or with pip
-pip install asyncpg redis[hiredis] structlog
 ```
 
 ### All Dependencies (Recommended)
@@ -43,9 +67,6 @@ For complete functionality:
 ```bash
 # Install all dependencies including future phases
 uv sync --extra full --extra dev
-
-# Or with pip
-pip install -e ".[full,dev]"
 ```
 
 ## 2. Environment Configuration
@@ -55,8 +76,8 @@ pip install -e ".[full,dev]"
 Copy the environment template:
 
 ```bash
-# Copy environment template
-cp env-templates/env.example .env
+# Copy development environment template
+cp env-templates/env.development .env
 
 # Edit with your settings
 nano .env  # or your preferred editor
@@ -245,10 +266,11 @@ The system automatically selects storage backend based on configuration:
 # Ensure you're in the right directory
 cd ai-agent-app
 
+# Activate virtual environment
+source .venv/bin/activate
+
 # Install in development mode
 uv sync
-# or
-pip install -e .
 ```
 
 #### Database Connection Issues
@@ -355,17 +377,24 @@ Once Phase 2 is set up and working:
 For the fastest setup to get Phase 2 working:
 
 ```bash
-# 1. Install dependencies
+# 1. Install UV (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Set up Python environment
 cd ai-agent-app
+uv venv
+source .venv/bin/activate
+
+# 3. Install dependencies
 uv sync
 
-# 2. Create basic environment
+# 4. Create basic environment
 echo "ENVIRONMENT=development
 DEBUG=true
 USE_MEMORY=true
 SECURITY_SECRET_KEY=dev-secret-key-change-in-production-32chars" > .env
 
-# 3. Test setup
+# 5. Test setup
 python examples/phase2_demo.py
 ```
 
