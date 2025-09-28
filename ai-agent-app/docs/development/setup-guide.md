@@ -88,16 +88,47 @@ nano .env  # or your preferred editor
 For development with in-memory storage (no external dependencies):
 
 ```bash
-# .env
+# .env (matches env-templates/env.development)
+# Application Settings
 ENVIRONMENT=development
 DEBUG=true
+APP_NAME="AI Agent Application"
+HOST=0.0.0.0
+PORT=8000
+
+# Storage Settings
 USE_MEMORY=true
 USE_DATABASE=false
 USE_REDIS=false
 
-# Security (change this!)
+# Security Settings (auto-generated if not provided)
 SECURITY_SECRET_KEY=dev-secret-key-change-in-production-32chars
+
+# Observability Settings
+OBSERVABILITY_LOG_LEVEL=DEBUG
+OBSERVABILITY_TRACING_SAMPLE_RATE=1.0
+FEATURE_ENABLE_DEBUG_ENDPOINTS=true
+
+# Relaxed rate limits for development
+RATE_LIMIT_API_DEFAULT_LIMIT=1000
+RATE_LIMIT_LLM_REQUESTS_PER_MINUTE=100
 ```
+
+**Note**: The `env.development` template is already configured for development with in-memory storage. For production or when using PostgreSQL/Redis, you'll need to add additional configuration variables.
+
+### Environment Template Options
+
+The project provides three environment templates:
+
+| Template | Purpose | Storage | Use Case |
+|----------|---------|---------|----------|
+| `env.development` | Local development | In-memory only | Fast development, no external dependencies |
+| `env.example` | Complete configuration | PostgreSQL + Redis | Full functionality with all features |
+| `env.production` | Production deployment | PostgreSQL + Redis | Production environment |
+
+**For development**: Use `env.development` (simple, in-memory)
+**For full features**: Use `env.example` and configure database/Redis
+**For production**: Use `env.production` with proper secrets
 
 ### Docker Setup (Recommended)
 
@@ -388,11 +419,8 @@ source .venv/bin/activate
 # 3. Install dependencies
 uv sync
 
-# 4. Create basic environment
-echo "ENVIRONMENT=development
-DEBUG=true
-USE_MEMORY=true
-SECURITY_SECRET_KEY=dev-secret-key-change-in-production-32chars" > .env
+# 4. Create basic environment (or copy the template)
+cp env-templates/env.development .env
 
 # 5. Test setup
 python examples/phase2_demo.py
