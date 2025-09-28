@@ -35,6 +35,7 @@ from ai_agent.infrastructure.database.base import (
     DuplicateError,
     NotFoundError,
 )
+from ai_agent.observability.logging import get_logger
 
 
 class PostgreSQLRepository(BaseRepository):
@@ -49,6 +50,7 @@ class PostgreSQLRepository(BaseRepository):
         super().__init__()
         self.settings = settings
         self._pool: asyncpg.Pool | None = None
+        self.logger = get_logger(__name__)
 
     async def connect(self) -> None:
         """Initialize database connection pool."""
@@ -62,15 +64,32 @@ class PostgreSQLRepository(BaseRepository):
                 min_size=self.settings.min_pool_size,
                 max_size=self.settings.max_pool_size,
                 command_timeout=self.settings.pool_timeout,
+                # Add connection health checks and proper cleanup
+                max_queries=50000,  # Close connections after 50k queries
+                max_inactive_connection_lifetime=300.0,  # 5 minutes
+                setup=self._setup_connection,  # Setup function for each connection
             )
             self._connected = True
         except Exception as e:
             raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
+    async def _setup_connection(self, conn: Any) -> None:
+        """Setup function for each new connection."""
+        # Set connection-specific settings
+        await conn.execute("SET statement_timeout = '30s'")
+        await conn.execute("SET idle_in_transaction_session_timeout = '60s'")
+
     async def disconnect(self) -> None:
         """Close database connection pool."""
         if self._pool:
-            await self._pool.close()
+            try:
+                # Gracefully close all connections
+                await self._pool.close()
+                self.logger.info("PostgreSQL connection pool closed successfully")
+            except Exception as e:
+                self.logger.error(f"Error closing PostgreSQL pool: {e}")
+            finally:
+                self._pool = None
         self._connected = False
 
     async def health_check(self) -> bool:

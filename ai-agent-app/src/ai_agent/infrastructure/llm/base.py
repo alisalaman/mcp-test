@@ -291,66 +291,12 @@ class BaseLLMProvider(ABC):
 
     def _handle_error(self, error: Exception, context: str = "") -> LLMError:
         """Convert provider-specific errors to standardized LLMError."""
-        error_message = str(error)
+        # Import here to avoid circular imports
+        from .error_handler import LLMErrorHandler
 
-        # Use exception type checking instead of string matching for better reliability
-        error_mapping = {
-            # Authentication errors
-            "AuthenticationError": LLMErrorCode.AUTHENTICATION_ERROR,
-            "UnauthorizedError": LLMErrorCode.AUTHENTICATION_ERROR,
-            "InvalidApiKeyError": LLMErrorCode.AUTHENTICATION_ERROR,
-            # Rate limiting errors
-            "RateLimitError": LLMErrorCode.RATE_LIMIT_ERROR,
-            "TooManyRequestsError": LLMErrorCode.RATE_LIMIT_ERROR,
-            # Quota errors
-            "QuotaExceededError": LLMErrorCode.QUOTA_EXCEEDED,
-            "BillingError": LLMErrorCode.QUOTA_EXCEEDED,
-            # Model errors
-            "ModelNotFoundError": LLMErrorCode.MODEL_NOT_FOUND,
-            "InvalidModelError": LLMErrorCode.MODEL_NOT_FOUND,
-            # Timeout errors
-            "TimeoutError": LLMErrorCode.TIMEOUT_ERROR,
-            "RequestTimeoutError": LLMErrorCode.TIMEOUT_ERROR,
-            # Network errors
-            "ConnectionError": LLMErrorCode.NETWORK_ERROR,
-            "NetworkError": LLMErrorCode.NETWORK_ERROR,
-            "ConnectionTimeoutError": LLMErrorCode.NETWORK_ERROR,
-        }
-
-        # Try to match by exception type name first
-        error_type_name = type(error).__name__
-        error_code = error_mapping.get(error_type_name, LLMErrorCode.PROVIDER_ERROR)
-
-        # Fallback to string matching for unknown exception types
-        if error_code == LLMErrorCode.PROVIDER_ERROR:
-            if (
-                "authentication" in error_message.lower()
-                or "unauthorized" in error_message.lower()
-            ):
-                error_code = LLMErrorCode.AUTHENTICATION_ERROR
-            elif (
-                "rate limit" in error_message.lower()
-                or "too many requests" in error_message.lower()
-            ):
-                error_code = LLMErrorCode.RATE_LIMIT_ERROR
-            elif "quota" in error_message.lower() or "billing" in error_message.lower():
-                error_code = LLMErrorCode.QUOTA_EXCEEDED
-            elif (
-                "model" in error_message.lower()
-                and "not found" in error_message.lower()
-            ):
-                error_code = LLMErrorCode.MODEL_NOT_FOUND
-            elif "timeout" in error_message.lower():
-                error_code = LLMErrorCode.TIMEOUT_ERROR
-            elif (
-                "network" in error_message.lower()
-                or "connection" in error_message.lower()
-            ):
-                error_code = LLMErrorCode.NETWORK_ERROR
-
-        return LLMError(
-            message=f"{context}: {error_message}" if context else error_message,
-            error_code=error_code,
-            provider=self.provider_type.value,
-            details={"original_error": str(error), "error_type": type(error).__name__},
+        result: LLMError = LLMErrorHandler.handle_error(
+            error=error,
+            provider=self.provider_type,
+            context=context,
         )
+        return result

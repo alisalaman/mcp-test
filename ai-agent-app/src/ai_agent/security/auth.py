@@ -11,6 +11,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 
 from ..observability.logging import get_logger
+from .secure_storage import get_secure_storage, SecureStorage
 
 logger = get_logger(__name__)
 
@@ -317,6 +318,7 @@ class AuthenticationService:
         algorithm: str = "HS256",
         access_token_expire_minutes: int = 30,
         refresh_token_expire_days: int = 7,
+        secure_storage: SecureStorage | None = None,
     ):
         self.jwt_manager = JWTManager(
             secret_key=secret_key,
@@ -327,10 +329,7 @@ class AuthenticationService:
         self.api_key_manager = APIKeyManager()
         self.password_context = CryptContext(schemes=["argon2"], deprecated="auto")
         self.logger = get_logger(__name__)
-
-        # In production, this would be in a database
-        self._users: dict[str, User] = {}
-        self._user_credentials: dict[str, str] = {}  # username -> hashed_password
+        self.secure_storage = secure_storage or get_secure_storage()
 
     def hash_password(self, password: str) -> str:
         """Hash a password."""
@@ -348,7 +347,9 @@ class AuthenticationService:
         roles: list[UserRole] | None = None,
     ) -> User:
         """Create a new user."""
-        if username in self._user_credentials:
+        # Check if user already exists
+        existing_user = self.get_user_by_username(username)
+        if existing_user:
             raise AuthenticationError(f"User '{username}' already exists") from None
 
         user_id = secrets.token_urlsafe(16)
@@ -358,21 +359,30 @@ class AuthenticationService:
             id=user_id, username=username, email=email, roles=roles or [UserRole.USER]
         )
 
-        self._users[user_id] = user
-        self._user_credentials[username] = hashed_password
+        # Store user data securely
+        self.secure_storage.store(f"user:{user_id}", user.model_dump())
+        self.secure_storage.store(
+            f"credentials:{username}", {"password": hashed_password}
+        )
 
         self.logger.info(f"Created user: {username}")
         return user
 
     def get_user(self, user_id: str) -> User | None:
         """Get user by ID."""
-        return self._users.get(user_id)
+        user_data = self.secure_storage.retrieve(f"user:{user_id}")
+        if user_data:
+            return User(**user_data)
+        return None
 
     def get_user_by_username(self, username: str) -> User | None:
         """Get user by username."""
-        for user in self._users.values():
-            if user.username == username:
-                return user
+        # Search through all users to find by username
+        for key in self.secure_storage.list_keys():
+            if key.startswith("user:"):
+                user_data = self.secure_storage.retrieve(key)
+                if user_data and user_data.get("username") == username:
+                    return User(**user_data)
         return None
 
     def authenticate_user(self, username: str, password: str) -> User | None:
@@ -384,7 +394,11 @@ class AuthenticationService:
         if not user.is_active:
             return None
 
-        hashed_password = self._user_credentials.get(username)
+        credentials_data = self.secure_storage.retrieve(f"credentials:{username}")
+        if not credentials_data:
+            return None
+
+        hashed_password = credentials_data.get("password")
         if not hashed_password:
             return None
 
@@ -393,6 +407,7 @@ class AuthenticationService:
 
         # Update last login
         user.last_login = datetime.now(UTC)
+        self.secure_storage.store(f"user:{user.id}", user.model_dump())
 
         self.logger.info(f"User authenticated: {username}")
         return user
@@ -471,6 +486,9 @@ class AuthenticationService:
         user.roles = roles
         user.updated_at = datetime.now(UTC)
 
+        # Update stored user data
+        self.secure_storage.store(f"user:{user_id}", user.model_dump())
+
         self.logger.info(
             f"Updated roles for user {user.username}: {[r.value for r in roles]}"
         )
@@ -484,6 +502,9 @@ class AuthenticationService:
 
         user.is_active = False
         user.updated_at = datetime.now(UTC)
+
+        # Update stored user data
+        self.secure_storage.store(f"user:{user_id}", user.model_dump())
 
         # Revoke all API keys
         api_keys = self.list_user_api_keys(user_id)

@@ -280,28 +280,20 @@ class AnthropicProvider(BaseLLMProvider):
 
     def _handle_error(self, error: Exception, context: str = "") -> LLMError:
         """Handle Anthropic-specific errors."""
-        error_message = str(error)
+        from .error_handler import LLMErrorHandler
 
-        # Map Anthropic-specific errors
-        if "authentication_error" in error_message.lower():
-            error_code = LLMErrorCode.AUTHENTICATION_ERROR
-        elif "rate_limit_error" in error_message.lower():
-            error_code = LLMErrorCode.RATE_LIMIT_ERROR
-        elif "quota_exceeded" in error_message.lower():
-            error_code = LLMErrorCode.QUOTA_EXCEEDED
-        elif "invalid_model" in error_message.lower():
-            error_code = LLMErrorCode.MODEL_NOT_FOUND
-        elif "timeout" in error_message.lower():
-            error_code = LLMErrorCode.TIMEOUT_ERROR
-        elif "network" in error_message.lower():
-            error_code = LLMErrorCode.NETWORK_ERROR
-        else:
-            # Use parent error handling
-            return super()._handle_error(error, context)
+        # Anthropic-specific custom patterns
+        custom_patterns = {
+            "authentication_error": LLMErrorCode.AUTHENTICATION_ERROR,
+            "rate_limit_error": LLMErrorCode.RATE_LIMIT_ERROR,
+            "quota_exceeded": LLMErrorCode.QUOTA_EXCEEDED,
+            "invalid_model": LLMErrorCode.MODEL_NOT_FOUND,
+        }
 
-        return LLMError(
-            message=f"{context}: {error_message}" if context else error_message,
-            error_code=error_code,
-            provider=self.provider_type.value,
-            details={"original_error": str(error), "error_type": type(error).__name__},
+        result: LLMError = LLMErrorHandler.handle_error(
+            error=error,
+            provider=self.provider_type,
+            context=context,
+            custom_patterns=custom_patterns,
         )
+        return result

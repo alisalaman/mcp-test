@@ -22,14 +22,48 @@ class SecurityValidator:
     def __init__(self) -> None:
         self.logger = get_logger(__name__)
 
+        # Pre-compile regex patterns for better performance
+        self._email_pattern = re.compile(
+            r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        )
+        self._special_chars_pattern = re.compile(r"[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]")
+        self._sequential_pattern = re.compile(
+            r"(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz|012|123|234|345|456|567|678|789|890)",
+            re.IGNORECASE,
+        )
+        self._repeated_pattern = re.compile(r"(.)\1{2,}")
+
+        # Common passwords set for O(1) lookup
+        self._common_passwords = {
+            "password",
+            "123456",
+            "123456789",
+            "qwerty",
+            "abc123",
+            "password123",
+            "admin",
+            "letmein",
+            "welcome",
+            "monkey",
+            "12345678",
+            "password1",
+            "123123",
+            "qwerty123",
+            "1q2w3e4r",
+            "password12",
+            "1234567890",
+            "qwertyuiop",
+            "asdfghjkl",
+            "zxcvbnm",
+        }
+
     def validate_email(self, email: str) -> bool:
         """Validate email format."""
         if not email or not isinstance(email, str):
             return False
 
-        # Basic email regex with additional checks
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(pattern, email):
+        # Use pre-compiled pattern for better performance
+        if not self._email_pattern.match(email):
             return False
 
         # Additional checks for invalid patterns
@@ -72,11 +106,17 @@ class SecurityValidator:
         else:
             result["score"] += 0.5
 
-        # Character variety checks
-        has_upper = any(c.isupper() for c in password)
-        has_lower = any(c.islower() for c in password)
-        has_digit = any(c.isdigit() for c in password)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
+        # Character variety checks - single pass through password
+        has_upper = has_lower = has_digit = has_special = False
+        for char in password:
+            if char.isupper():
+                has_upper = True
+            elif char.islower():
+                has_lower = True
+            elif char.isdigit():
+                has_digit = True
+            elif self._special_chars_pattern.match(char):
+                has_special = True
 
         if not has_upper:
             result["issues"].append(
@@ -108,34 +148,21 @@ class SecurityValidator:
         else:
             result["score"] += 1
 
-        # Common password check
-        common_passwords = [
-            "password",
-            "123456",
-            "123456789",
-            "qwerty",
-            "abc123",
-            "password123",
-            "admin",
-            "letmein",
-            "welcome",
-            "monkey",
-        ]
-
-        if password.lower() in common_passwords:
+        # Common password check - O(1) lookup
+        if password.lower() in self._common_passwords:
             result["issues"].append("Password is too common")
             result["is_valid"] = False
             result["score"] -= 2
 
-        # Sequential character check
-        if self._has_sequential_chars(password):
+        # Sequential character check - use compiled pattern
+        if self._sequential_pattern.search(password):
             result["issues"].append("Password contains sequential characters")
             result["suggestions"].append(
                 "Avoid sequential characters like 'abc' or '123'"
             )
 
-        # Repeated character check
-        if self._has_repeated_chars(password):
+        # Repeated character check - use compiled pattern
+        if self._repeated_pattern.search(password):
             result["issues"].append("Password contains repeated characters")
             result["suggestions"].append(
                 "Avoid repeated characters like 'aaa' or '111'"
@@ -145,49 +172,6 @@ class SecurityValidator:
         result["score"] = max(0, min(5, result["score"]))
 
         return result
-
-    def _has_sequential_chars(self, password: str) -> bool:
-        """Check for sequential characters."""
-        for i in range(len(password) - 2):
-            # Check for sequential characters in the same case
-            if (
-                password[i].isalpha()
-                and password[i + 1].isalpha()
-                and password[i + 2].isalpha()
-                and password[i].islower()
-                == password[i + 1].islower()
-                == password[i + 2].islower()
-                and ord(password[i + 1]) == ord(password[i]) + 1
-                and ord(password[i + 2]) == ord(password[i]) + 2
-            ):
-                return True
-            # Check for sequential digits (but allow short sequences like 123)
-            if (
-                password[i].isdigit()
-                and password[i + 1].isdigit()
-                and password[i + 2].isdigit()
-                and ord(password[i + 1]) == ord(password[i]) + 1
-                and ord(password[i + 2]) == ord(password[i]) + 2
-            ):
-                # Only flag if it's a longer sequence (4+ consecutive digits)
-                # or if it's at the beginning/end of the password
-                if i == 0 or i + 3 >= len(password):
-                    return True
-                # Check if there are more consecutive digits
-                if (
-                    i + 3 < len(password)
-                    and password[i + 3].isdigit()
-                    and ord(password[i + 3]) == ord(password[i]) + 3
-                ):
-                    return True
-        return False
-
-    def _has_repeated_chars(self, password: str) -> bool:
-        """Check for repeated characters."""
-        for i in range(len(password) - 2):
-            if password[i] == password[i + 1] == password[i + 2]:
-                return True
-        return False
 
     def validate_url(self, url: str) -> bool:
         """Validate URL format."""
@@ -264,55 +248,52 @@ class SecurityValidator:
         return result
 
     def detect_sql_injection(self, value: str) -> bool:
-        """Detect potential SQL injection with comprehensive patterns."""
+        """Detect potential SQL injection with targeted patterns."""
         if not isinstance(value, str):
             return False  # type: ignore[unreachable]
 
-        # Enhanced SQL injection patterns
+        # More targeted SQL injection patterns - only flag suspicious combinations
         patterns = [
-            # Basic SQL keywords in SQL context (more specific patterns)
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s+[a-zA-Z0-9_]+\s+FROM\b)",
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s+[a-zA-Z0-9_]+\s+INTO\b)",
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s+[a-zA-Z0-9_]+\s+WHERE\b)",
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s+[a-zA-Z0-9_]+\s+SET\b)",
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s+[a-zA-Z0-9_]+\s+VALUES\b)",
-            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION|MERGE|TRUNCATE)\s*\()",
-            # Boolean-based blind SQL injection
-            r"(\b(OR|AND)\s+\d+\s*=\s*\d+)",
-            r"(\b(OR|AND)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?)",
-            # Comment patterns
-            r"(--|#|\/\*|\*\/)",
+            # Classic SQL injection techniques
+            r"(\b(OR|AND)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?\s*(--|#))",  # Boolean-based with comments
+            r"(\bUNION\s+(ALL\s+)?SELECT\s+.*\s+FROM\s+.*\s*(--|#))",  # Union-based with comments
+            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER)\s+.*\s+(--|#|\/\*))",  # SQL with comments
             # Time-based blind SQL injection
-            r"(\b(WAITFOR|DELAY|SLEEP|BENCHMARK)\b)",
-            r"(\b(IF|CASE|WHEN|THEN|ELSE)\b)",
-            # String manipulation functions
-            r"(\b(CHAR|ASCII|SUBSTRING|CONCAT|LENGTH|LEN|UPPER|LOWER)\b)",
-            r"(\b(CAST|CONVERT|CONCAT_WS|GROUP_CONCAT)\b)",
-            # Database schema information
-            r"(\b(INFORMATION_SCHEMA|SYSOBJECTS|SYSCOLUMNS|SYSUSERS|SYSLOGINS)\b)",
-            r"(\b(TABLES|COLUMNS|ROUTINES|TRIGGERS|VIEWS|INDEXES)\b)",
-            # Union-based SQL injection
-            r"(\bUNION\s+(ALL\s+)?SELECT\b)",
+            r"(\b(WAITFOR\s+DELAY|SLEEP\s*\(|BENCHMARK\s*\()\s*['\"]?\d+['\"]?\s*\)?)",  # Time delays
+            r"(\b(IF|CASE)\s*\(.*\s*,\s*SLEEP\s*\(|WAITFOR\s+DELAY)",  # Conditional time delays
             # Error-based SQL injection
-            r"(\b(EXTRACTVALUE|UPDATEXML|FLOOR|RAND|COUNT)\b)",
-            # Stacked queries
-            r"(\b(EXEC|EXECUTE|SP_EXECUTESQL)\b)",
-            # Database-specific functions
-            r"(\b(LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b)",
-            # Database functions in SQL context (more specific patterns)
-            r"(\b(USER\(\)|DATABASE\(\)|VERSION\(\)|SCHEMA\(\)|SESSION_USER\(\))\b)",
-            r"(\b(SELECT\s+USER|SELECT\s+DATABASE|SELECT\s+VERSION|SELECT\s+SCHEMA)\b)",
-            # Blind SQL injection techniques
-            r"(\b(ASCII|ORD|HEX|UNHEX|BIN|OCT)\b)",
-            # Time delays and conditional statements
-            r"(\b(IFNULL|ISNULL|COALESCE|NULLIF)\b)",
-            # Database fingerprinting
-            r"(\b(MYSQL|POSTGRESQL|ORACLE|SQLITE|MSSQL|DB2)\b)",
-            # Privilege escalation
-            r"(\b(GRANT|REVOKE|PRIVILEGES|ROLES)\b)",
-            # Data exfiltration
-            r"(\b(LOAD_DATA|SELECT\s+INTO\s+OUTFILE)\b)",
+            r"(\b(EXTRACTVALUE|UPDATEXML)\s*\(.*,\s*['\"].*['\"].*\)\s*(--|#))",  # Error-based with comments
+            r"(\b(FLOOR|RAND)\s*\(.*\s*,\s*.*\s*\)\s*(--|#))",  # Error-based functions
+            # Database schema enumeration
+            r"(\b(INFORMATION_SCHEMA|SYSOBJECTS|SYSCOLUMNS)\s+.*\s+(--|#))",  # Schema queries with comments
+            r"(\b(SELECT\s+.*\s+FROM\s+INFORMATION_SCHEMA|SYSOBJECTS|SYSCOLUMNS)\s+(--|#))",  # Schema enumeration
+            # Stacked queries and system commands
+            r"(\b(EXEC|EXECUTE|SP_EXECUTESQL)\s+.*\s+(--|#))",  # Stacked queries with comments
+            r"(\b(LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)\s+.*\s+(--|#))",  # File operations with comments
+            # Privilege escalation attempts
+            r"(\b(GRANT|REVOKE)\s+.*\s+(--|#))",  # Privilege escalation with comments
+            # Data exfiltration patterns
+            r"(\b(SELECT\s+.*\s+INTO\s+OUTFILE|DUMPFILE)\s+.*\s+(--|#))",  # Data exfiltration with comments
+            # Suspicious string manipulation in SQL context
+            r"(\b(CHAR|ASCII|SUBSTRING|CONCAT)\s*\(.*\s*\)\s*.*\s+(--|#))",  # String functions with comments
+            # Database fingerprinting with comments
+            r"(\b(USER\(\)|DATABASE\(\)|VERSION\(\))\s*.*\s+(--|#))",  # Database info with comments
         ]
+
+        # Whitelist of legitimate patterns that might trigger false positives
+        whitelist_patterns = [
+            r"^[a-zA-Z0-9\s\-_.,!?]+$",  # Simple alphanumeric text
+            r"^[0-9]+$",  # Pure numbers
+            r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",  # Email addresses
+            r"^https?://[^\s]+$",  # URLs
+            r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$",  # Dates
+            r"^[0-9]{2}:[0-9]{2}:[0-9]{2}$",  # Times
+        ]
+
+        # Check whitelist first
+        for whitelist_pattern in whitelist_patterns:
+            if re.match(whitelist_pattern, value.strip()):
+                return False
 
         # Check for patterns
         for pattern in patterns:

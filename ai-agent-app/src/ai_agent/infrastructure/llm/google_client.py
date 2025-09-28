@@ -387,34 +387,23 @@ class GoogleProvider(BaseLLMProvider):
 
     def _handle_error(self, error: Exception, context: str = "") -> LLMError:
         """Handle Google-specific errors."""
-        error_message = str(error)
+        from .error_handler import LLMErrorHandler
 
-        # Map Google-specific errors
-        if (
-            "permission_denied" in error_message.lower()
-            or "authentication" in error_message.lower()
-        ):
-            error_code = LLMErrorCode.AUTHENTICATION_ERROR
-        elif (
-            "quota_exceeded" in error_message.lower()
-            or "resource_exhausted" in error_message.lower()
-        ):
-            error_code = LLMErrorCode.QUOTA_EXCEEDED
-        elif "invalid_argument" in error_message.lower():
-            error_code = LLMErrorCode.INVALID_REQUEST
-        elif "not_found" in error_message.lower():
-            error_code = LLMErrorCode.MODEL_NOT_FOUND
-        elif "deadline_exceeded" in error_message.lower():
-            error_code = LLMErrorCode.TIMEOUT_ERROR
-        elif "unavailable" in error_message.lower():
-            error_code = LLMErrorCode.NETWORK_ERROR
-        else:
-            # Use parent error handling
-            return super()._handle_error(error, context)
+        # Google-specific custom patterns
+        custom_patterns = {
+            "permission_denied": LLMErrorCode.AUTHENTICATION_ERROR,
+            "quota_exceeded": LLMErrorCode.QUOTA_EXCEEDED,
+            "resource_exhausted": LLMErrorCode.QUOTA_EXCEEDED,
+            "invalid_argument": LLMErrorCode.INVALID_REQUEST,
+            "not_found": LLMErrorCode.MODEL_NOT_FOUND,
+            "deadline_exceeded": LLMErrorCode.TIMEOUT_ERROR,
+            "unavailable": LLMErrorCode.NETWORK_ERROR,
+        }
 
-        return LLMError(
-            message=f"{context}: {error_message}" if context else error_message,
-            error_code=error_code,
-            provider=self.provider_type.value,
-            details={"original_error": str(error), "error_type": type(error).__name__},
+        result: LLMError = LLMErrorHandler.handle_error(
+            error=error,
+            provider=self.provider_type,
+            context=context,
+            custom_patterns=custom_patterns,
         )
+        return result

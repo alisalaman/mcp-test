@@ -197,6 +197,13 @@ class TestAuthenticationService:
         """Set up test fixtures."""
         self.secret_key = "test-secret-key-for-auth-testing-only"
         self.auth_service = AuthenticationService(secret_key=self.secret_key)
+        # Clear secure storage before each test
+        self.auth_service.secure_storage._cache.clear()
+
+    def teardown_method(self):
+        """Clean up after each test."""
+        # Clear secure storage after each test
+        self.auth_service.secure_storage._cache.clear()
 
     def test_hash_password(self):
         """Test password hashing."""

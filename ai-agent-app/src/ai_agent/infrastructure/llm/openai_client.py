@@ -262,26 +262,20 @@ class OpenAIProvider(BaseLLMProvider):
 
     def _handle_error(self, error: Exception, context: str = "") -> LLMError:
         """Handle OpenAI-specific errors."""
-        error_message = str(error)
+        from .error_handler import LLMErrorHandler
 
-        # Map OpenAI-specific errors
-        if "insufficient_quota" in error_message.lower():
-            error_code = LLMErrorCode.QUOTA_EXCEEDED
-        elif "rate_limit_exceeded" in error_message.lower():
-            error_code = LLMErrorCode.RATE_LIMIT_ERROR
-        elif "invalid_api_key" in error_message.lower():
-            error_code = LLMErrorCode.AUTHENTICATION_ERROR
-        elif "model_not_found" in error_message.lower():
-            error_code = LLMErrorCode.MODEL_NOT_FOUND
-        elif "timeout" in error_message.lower():
-            error_code = LLMErrorCode.TIMEOUT_ERROR
-        else:
-            # Use parent error handling
-            return super()._handle_error(error, context)
+        # OpenAI-specific custom patterns
+        custom_patterns = {
+            "insufficient_quota": LLMErrorCode.QUOTA_EXCEEDED,
+            "rate_limit_exceeded": LLMErrorCode.RATE_LIMIT_ERROR,
+            "invalid_api_key": LLMErrorCode.AUTHENTICATION_ERROR,
+            "model_not_found": LLMErrorCode.MODEL_NOT_FOUND,
+        }
 
-        return LLMError(
-            message=f"{context}: {error_message}" if context else error_message,
-            error_code=error_code,
-            provider=self.provider_type.value,
-            details={"original_error": str(error), "error_type": type(error).__name__},
+        result: LLMError = LLMErrorHandler.handle_error(
+            error=error,
+            provider=self.provider_type,
+            context=context,
+            custom_patterns=custom_patterns,
         )
+        return result

@@ -6,11 +6,17 @@ secret management integration, and factory pattern for configuration selection.
 """
 
 import os
+import secrets
 import sys
 from enum import Enum
 
 from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _generate_secure_key() -> str:
+    """Generate a secure random key for development/testing only."""
+    return secrets.token_urlsafe(32)
 
 
 class Environment(str, Enum):
@@ -289,9 +295,7 @@ class ApplicationSettings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     security: SecuritySettings = Field(
         default_factory=lambda: SecuritySettings(
-            secret_key=os.getenv(
-                "SECURITY_SECRET_KEY", "dev-secret-key-change-in-production-32chars"
-            )
+            secret_key=os.getenv("SECURITY_SECRET_KEY") or _generate_secure_key()
         )
     )
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
@@ -332,9 +336,7 @@ class DevelopmentSettings(ApplicationSettings):
     # Relaxed security for development
     security: SecuritySettings = Field(
         default_factory=lambda: SecuritySettings(
-            secret_key=os.getenv(
-                "SECURITY_SECRET_KEY", "dev-secret-key-change-in-production-32chars"
-            ),
+            secret_key=os.getenv("SECURITY_SECRET_KEY") or _generate_secure_key(),
             cors_origins=["http://localhost:3000", "http://localhost:3001"],
         )
     )

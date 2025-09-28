@@ -25,7 +25,7 @@ class CircuitState(Enum):
 
 @dataclass
 class CircuitBreakerMetrics:
-    """Circuit breaker metrics."""
+    """Circuit breaker metrics with rotation support."""
 
     failure_count: int = 0
     success_count: int = 0
@@ -35,6 +35,9 @@ class CircuitBreakerMetrics:
     half_open_calls: int = 0
     state_changes: int = 0
     last_state_change: float | None = None
+    # Rotation tracking
+    _rotation_count: int = 0
+    _max_rotation_count: int = 1000  # Reset metrics after 1000 operations
 
 
 class CircuitBreaker:
@@ -53,9 +56,23 @@ class CircuitBreaker:
         self.metrics = CircuitBreakerMetrics()
         self._lock = asyncio.Lock()
 
-    async def call(  # type: ignore[no-untyped-def]
-        self, func: Callable[..., Any], *args, **kwargs
-    ) -> Any:
+    def _check_and_rotate_metrics(self) -> None:
+        """Check if metrics need rotation and reset if necessary."""
+        if self.metrics._rotation_count >= self.metrics._max_rotation_count:
+            logger.info(
+                "Rotating circuit breaker metrics",
+                circuit_name=self.name,
+                rotation_count=self.metrics._rotation_count,
+            )
+            # Reset counters but preserve state
+            self.metrics.failure_count = 0
+            self.metrics.success_count = 0
+            self.metrics.total_requests = 0
+            self.metrics.half_open_calls = 0
+            self.metrics._rotation_count = 0
+            # Keep timing information for state transitions
+
+    async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Execute function with circuit breaker protection.
 
         Args:
@@ -92,6 +109,10 @@ class CircuitBreaker:
                     raise CircuitBreakerOpenException(self.name)
 
             self.metrics.total_requests += 1
+            self.metrics._rotation_count += 1
+
+            # Check if metrics need rotation
+            self._check_and_rotate_metrics()
 
             try:
                 result = await func(*args, **kwargs)
