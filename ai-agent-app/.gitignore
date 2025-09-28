@@ -180,6 +180,7 @@ secrets/
 *.p12
 *.pfx
 *.crt
+.encryption_key
 
 # OS generated files
 .DS_Store
