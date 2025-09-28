@@ -35,11 +35,11 @@ class WebSocketAuth:
         if session_id:
             try:
                 parsed_session_id = UUID(session_id)
-            except ValueError as e:
+            except ValueError:
                 await websocket.close(
                     code=status.WS_1008_POLICY_VIOLATION, reason="Invalid session ID"
                 )
-                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION) from e
+                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION)
 
         # Check for API key in headers (if available)
         api_key = websocket.headers.get("x-api-key")
@@ -60,16 +60,16 @@ class WebSocketAuth:
                 user_id = payload.get("sub")
                 if user_id:
                     return user_id, parsed_session_id
-            except jwt.ExpiredSignatureError as e:
+            except jwt.ExpiredSignatureError:
                 await websocket.close(
                     code=status.WS_1008_POLICY_VIOLATION, reason="Token expired"
                 )
-                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION) from e
-            except jwt.InvalidTokenError as e:
+                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION)
+            except jwt.InvalidTokenError:
                 await websocket.close(
                     code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token"
                 )
-                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION) from e
+                raise WebSocketDisconnect(code=status.WS_1008_POLICY_VIOLATION)
 
         # For development, allow anonymous access
         if self.settings.is_development:

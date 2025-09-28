@@ -34,6 +34,8 @@ class InMemoryRepository(BaseRepository):
         # Indexes for efficient queries
         self._messages_by_session: dict[UUID, list[UUID]] = defaultdict(list)
         self._tools_by_agent: dict[UUID, list[UUID]] = defaultdict(list)
+        self._sessions_by_user: dict[str, list[UUID]] = defaultdict(list)
+        self._messages_by_user: dict[str, list[UUID]] = defaultdict(list)
 
         # Thread safety
         self._lock = asyncio.Lock()
@@ -52,6 +54,8 @@ class InMemoryRepository(BaseRepository):
             self._mcp_servers.clear()
             self._messages_by_session.clear()
             self._tools_by_agent.clear()
+            self._sessions_by_user.clear()
+            self._messages_by_user.clear()
         self._connected = False
 
     async def health_check(self) -> bool:
@@ -67,6 +71,7 @@ class InMemoryRepository(BaseRepository):
                 raise DuplicateError(f"Session with ID {session.id} already exists")
 
             self._sessions[session.id] = session
+            self._sessions_by_user[session.user_id].append(session.id)
             return session
 
     async def get_session(self, session_id: UUID) -> Session | None:
@@ -79,10 +84,15 @@ class InMemoryRepository(BaseRepository):
     ) -> list[Session]:
         """List sessions with optional filtering."""
         self._ensure_connected()
-        sessions = list(self._sessions.values())
 
         if user_id:
-            sessions = [s for s in sessions if s.user_id == user_id]
+            # Use user index for O(1) lookup
+            session_ids = self._sessions_by_user.get(user_id, [])
+            sessions = [
+                self._sessions[sid] for sid in session_ids if sid in self._sessions
+            ]
+        else:
+            sessions = list(self._sessions.values())
 
         # Sort by last activity
         sessions.sort(key=lambda s: s.last_activity, reverse=True)
@@ -116,6 +126,13 @@ class InMemoryRepository(BaseRepository):
             # Clean up indexes
             self._messages_by_session.pop(session_id, None)
 
+            # Remove from user index
+            session = self._sessions[session_id]
+            if session.user_id in self._sessions_by_user:
+                user_sessions = self._sessions_by_user[session.user_id]
+                if session_id in user_sessions:
+                    user_sessions.remove(session_id)
+
             # Delete session
             self._sessions.pop(session_id, None)
             return True
@@ -136,6 +153,10 @@ class InMemoryRepository(BaseRepository):
             self._messages[message.id] = message
             self._messages_by_session[message.session_id].append(message.id)
 
+            # Add to user index
+            session = self._sessions[message.session_id]
+            self._messages_by_user[session.user_id].append(message.id)
+
             # Update session metadata
             session = self._sessions[message.session_id]
             session.message_count += 1
@@ -155,6 +176,19 @@ class InMemoryRepository(BaseRepository):
         """Get messages for a session."""
         self._ensure_connected()
         message_ids = self._messages_by_session.get(session_id, [])
+        messages = [self._messages[mid] for mid in message_ids if mid in self._messages]
+
+        # Sort by creation time
+        messages.sort(key=lambda m: m.created_at)
+
+        return messages[offset : offset + limit]
+
+    async def get_messages_by_user(
+        self, user_id: str, limit: int = 100, offset: int = 0
+    ) -> list[Message]:
+        """Get messages for a user using user index for O(1) lookup."""
+        self._ensure_connected()
+        message_ids = self._messages_by_user.get(user_id, [])
         messages = [self._messages[mid] for mid in message_ids if mid in self._messages]
 
         # Sort by creation time
@@ -187,6 +221,13 @@ class InMemoryRepository(BaseRepository):
             session_messages = self._messages_by_session.get(message.session_id, [])
             if message_id in session_messages:
                 session_messages.remove(message_id)
+
+            # Remove from user index
+            if message.session_id in self._sessions:
+                session = self._sessions[message.session_id]
+                user_messages = self._messages_by_user.get(session.user_id, [])
+                if message_id in user_messages:
+                    user_messages.remove(message_id)
 
             # Update session message count
             if message.session_id in self._sessions:

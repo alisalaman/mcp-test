@@ -34,7 +34,7 @@ class GoogleProvider(BaseLLMProvider):
         super().__init__(config)
 
         # Configure the Google AI client
-        genai.configure(api_key=config.get("api_key"))
+        genai.configure(api_key=config.get("api_key"))  # type: ignore
 
         self.default_model = config.get("default_model", "gemini-1.5-pro")
         self.max_tokens = config.get("max_tokens", 8192)
@@ -67,7 +67,7 @@ class GoogleProvider(BaseLLMProvider):
 
         try:
             # Get the model
-            model = genai.GenerativeModel(
+            model = genai.GenerativeModel(  # type: ignore
                 model_name=request.model,
                 safety_settings=self.safety_settings,
                 generation_config=self.generation_config,
@@ -80,12 +80,6 @@ class GoogleProvider(BaseLLMProvider):
             tools = None
             if request.tools:
                 tools = self._convert_tools(request.tools)
-                model = genai.GenerativeModel(
-                    model_name=request.model,
-                    tools=tools,
-                    safety_settings=self.safety_settings,
-                    generation_config=self.generation_config,
-                )
 
             # Generate content
             response = await asyncio.to_thread(
@@ -95,6 +89,8 @@ class GoogleProvider(BaseLLMProvider):
                     temperature=request.temperature,
                     max_output_tokens=request.max_tokens or self.max_tokens,
                 ),
+                tools=tools,
+                safety_settings=self.safety_settings,
             )
 
             # Extract content
@@ -153,17 +149,17 @@ class GoogleProvider(BaseLLMProvider):
             logger.error(
                 "Google Gemini generation failed", error=str(e), model=request.model
             )
-            raise self._handle_error(e, "Google Gemini generation") from e
+            raise self._handle_error(e, "Google Gemini generation")
 
-    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk, None]:
+    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk]:
         """Generate a streaming response."""
 
-        async def _stream() -> AsyncGenerator[LLMStreamChunk, None]:
+        async def _stream() -> AsyncGenerator[LLMStreamChunk]:
             self._validate_request(request)
 
             try:
                 # Get the model
-                model = genai.GenerativeModel(
+                model = genai.GenerativeModel(  # type: ignore
                     model_name=request.model,
                     safety_settings=self.safety_settings,
                     generation_config=self.generation_config,
@@ -173,27 +169,26 @@ class GoogleProvider(BaseLLMProvider):
                 content = self._convert_messages_to_content(request.messages)
 
                 # Add tools if provided
+                tools = None
                 if request.tools:
                     tools = self._convert_tools(request.tools)
-                    model = genai.GenerativeModel(
-                        model_name=request.model,
-                        tools=tools,
-                        safety_settings=self.safety_settings,
-                        generation_config=self.generation_config,
-                    )
 
                 # Stream the response
-                response_stream = await asyncio.to_thread(
-                    model.generate_content,
-                    content,
-                    stream=True,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=request.temperature,
-                        max_output_tokens=request.max_tokens or self.max_tokens,
-                    ),
-                )
+                def _generate_stream() -> Any:
+                    return model.generate_content(
+                        content,
+                        stream=True,
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=request.temperature,
+                            max_output_tokens=request.max_tokens or self.max_tokens,
+                        ),
+                        tools=tools,
+                        safety_settings=self.safety_settings,
+                    )
 
-                async for chunk in response_stream:
+                response_stream = await asyncio.to_thread(_generate_stream)
+
+                for chunk in response_stream:
                     if hasattr(chunk, "text") and chunk.text:
                         yield self._create_stream_chunk(
                             content=chunk.text,
@@ -229,7 +224,7 @@ class GoogleProvider(BaseLLMProvider):
                 logger.error(
                     "Google Gemini streaming failed", error=str(e), model=request.model
                 )
-                raise self._handle_error(e, "Google Gemini streaming") from e
+                raise self._handle_error(e, "Google Gemini streaming")
 
         return _stream()
 
@@ -295,13 +290,13 @@ class GoogleProvider(BaseLLMProvider):
 
         except Exception as e:
             logger.error("Failed to get Google models", error=str(e))
-            raise self._handle_error(e, "Google models fetch") from e
+            raise self._handle_error(e, "Google models fetch")
 
     async def health_check(self) -> bool:
         """Check if the provider is healthy."""
         try:
             # Simple health check by making a minimal request
-            model = genai.GenerativeModel("gemini-1.5-pro")
+            model = genai.GenerativeModel("gemini-1.5-pro")  # type: ignore
             response = await asyncio.to_thread(
                 model.generate_content,
                 "Hello",
@@ -380,7 +375,7 @@ class GoogleProvider(BaseLLMProvider):
         """Generate text embedding."""
         try:
             result = await asyncio.to_thread(
-                genai.embed_content,
+                genai.embed_content,  # type: ignore
                 model=model,
                 content=text,
                 task_type="retrieval_document",
@@ -388,7 +383,7 @@ class GoogleProvider(BaseLLMProvider):
             return list(result["embedding"])
         except Exception as e:
             logger.error("Google embedding failed", error=str(e), model=model)
-            raise self._handle_error(e, "Google embedding") from e
+            raise self._handle_error(e, "Google embedding")
 
     def _handle_error(self, error: Exception, context: str = "") -> LLMError:
         """Handle Google-specific errors."""

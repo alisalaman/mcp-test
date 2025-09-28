@@ -1,10 +1,12 @@
 """FastAPI application entry point."""
 
+from datetime import datetime, UTC
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from .api.rate_limiting import rate_limit_exceeded_handler
 
 # Import version from package
 from . import __description__, __version__
@@ -74,7 +76,7 @@ app.add_middleware(
 
 # Add rate limiting
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Add exception handlers
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
@@ -115,7 +117,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "healthy",
         "version": __version__,
-        "timestamp": "2024-01-01T00:00:00Z",  # Will be replaced with actual timestamp
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 

@@ -3,7 +3,7 @@ name = "ai-agent-app"
 version = "0.1.0"
 description = "Production-ready AI agent application with LangGraph and MCP"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Your Team", email = "team@company.com"}
@@ -13,7 +13,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -24,21 +24,41 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.3",
     "pydantic-settings>=2.6.0",
-
     # API Dependencies
     "slowapi>=0.1.9",
     "python-jose[cryptography]>=3.3.0",
     "python-multipart>=0.0.9",
-
     # Phase 2 Infrastructure Dependencies
     "asyncpg>=0.30.0",
     "redis[hiredis]>=5.2.0",
     "structlog>=24.1.0",
-
+    # Security Dependencies
+    "passlib[bcrypt]>=1.7.4",
+    "email-validator>=2.2.0",
     # Basic utilities
     "python-dotenv>=1.0.1",
     "tenacity>=9.1.2",
     "httpx>=0.28.1",
+    "azure-identity>=1.25.0",
+    "pyjwt>=2.10.1",
+    "opentelemetry-exporter-jaeger>=1.21.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "argon2-cffi>=25.1.0",
+    "openai>=1.109.1",
+    "colorama>=0.4.6",
+    "anthropic>=0.68.1",
+    "prometheus-client>=0.23.1",
+    "google-generativeai>=0.8.5",
+    "opentelemetry-exporter-zipkin>=1.37.0",
+    "setuptools>=80.9.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "boto3>=1.40.40",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "azure-keyvault-secrets>=4.10.0",
+    "opentelemetry-instrumentation-redis>=0.48b0",
+    "google-cloud-secret-manager>=2.24.0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "sqlalchemy>=2.0.43",
 ]
 
 [project.scripts]
@@ -79,21 +99,25 @@ full = [
     # Secret Management
     "boto3>=1.34.0",
     "azure-keyvault-secrets>=4.7.0",
+    "azure-identity>=1.25.0",
     "google-cloud-secret-manager>=2.18.0",
 
     # Observability
     "structlog>=24.1.0",
     "prometheus-client>=0.20.0",
-    "opentelemetry-api>=1.25.0",
-    "opentelemetry-sdk>=1.25.0",
-    "opentelemetry-instrumentation-fastapi>=0.45b0",
-    "opentelemetry-instrumentation-httpx>=0.45b0",
-    "opentelemetry-instrumentation-redis>=0.45b0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.45b0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-jaeger>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.42b0",
+    "opentelemetry-instrumentation-httpx>=0.42b0",
+    "opentelemetry-instrumentation-redis>=0.42b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.42b0",
 
     # Utilities
     "python-multipart>=0.0.9",  # File uploads
     "python-jose[cryptography]>=3.3.0",  # JWT handling
+    "PyJWT>=2.10.0",  # JWT token handling
     "passlib[bcrypt]>=1.7.4",  # Password hashing
     "email-validator>=2.2.0",  # Email validation
 ]
@@ -133,7 +157,7 @@ packages = ["src/ai_agent", "scripts"]
 # Black configuration
 [tool.black]
 line-length = 88
-target-version = ["py312"]
+target-version = ["py313"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -151,7 +175,7 @@ extend-exclude = '''
 
 # Ruff configuration
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 88
 
 [tool.ruff.lint]
@@ -166,6 +190,7 @@ select = [
 ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
+    "B904",  # raise without from inside except (temporarily disabled)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -176,7 +201,7 @@ ignore = [
 
 # MyPy configuration
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true
@@ -245,6 +270,9 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
+    "black>=25.9.0",
+    "mypy>=1.18.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "ruff>=0.13.2",
 ]

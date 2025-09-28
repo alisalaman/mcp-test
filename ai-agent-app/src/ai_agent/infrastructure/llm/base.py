@@ -149,7 +149,7 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk, None]:
+    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk]:
         """Generate a streaming response."""
         pass
 
@@ -185,7 +185,7 @@ class BaseLLMProvider(ABC):
         functions: list[dict[str, Any]],
         model: str | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[LLMStreamChunk, None]:
+    ) -> AsyncGenerator[LLMStreamChunk]:
         """Stream response with function calling support."""
         request = LLMRequest(
             messages=messages,

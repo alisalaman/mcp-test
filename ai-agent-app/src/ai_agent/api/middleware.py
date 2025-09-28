@@ -2,6 +2,7 @@
 
 import time
 import uuid
+from typing import Any
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -66,19 +67,69 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Middleware to add security headers."""
+    """Middleware to add comprehensive security headers."""
+
+    def __init__(self, app: Any, csp_policy: str | None = None) -> None:
+        super().__init__(app)
+        self.csp_policy = csp_policy or (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' https:; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        """Add security headers to response."""
+        """Add comprehensive security headers to response."""
         response = await call_next(request)
 
-        # Add security headers
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = self.csp_policy
+
+        # Prevent MIME type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
+
+        # XSS Protection (legacy but still useful)
         response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        # Referrer Policy
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # Permissions Policy (formerly Feature Policy)
+        response.headers["Permissions-Policy"] = (
+            "camera=(), " "microphone=(), " "geolocation=(), " "interest-cohort=()"
+        )
+
+        # Strict Transport Security (HSTS) - only for HTTPS
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains; preload"
+            )
+
+        # Cross-Origin Policies
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+
+        # Additional security headers
+        response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, proxy-revalidate"
+        )
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+        # Server information hiding
+        response.headers["Server"] = "AI-Agent"
 
         # Add CORS headers if needed
         if request.method == "OPTIONS":
@@ -88,6 +139,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Access-Control-Allow-Headers"] = (
                 "Content-Type, Authorization, X-API-Key, X-Correlation-ID"
             )
+            response.headers["Access-Control-Max-Age"] = "86400"
 
         return response
 

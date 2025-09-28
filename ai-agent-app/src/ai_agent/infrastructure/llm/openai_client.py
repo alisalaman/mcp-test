@@ -48,22 +48,22 @@ class OpenAIProvider(BaseLLMProvider):
         self._validate_request(request)
 
         try:
-            # Prepare OpenAI request
-            openai_request = {
-                "model": request.model,
-                "messages": request.messages,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-            }
-
-            # Add tools if provided
-            if request.tools:
-                openai_request["tools"] = request.tools
-                if request.tool_choice:
-                    openai_request["tool_choice"] = request.tool_choice
+            # Convert messages to OpenAI format
+            openai_messages = []
+            for msg in request.messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                openai_messages.append({"role": role, "content": content})
 
             # Make the request
-            response = await self.client.chat.completions.create(**openai_request)
+            response = await self.client.chat.completions.create(  # type: ignore
+                model=request.model,
+                messages=openai_messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                tools=request.tools if request.tools else None,
+                tool_choice=request.tool_choice if request.tool_choice else None,
+            )
 
             # Extract content and usage
             content = response.choices[0].message.content or ""
@@ -106,32 +106,32 @@ class OpenAIProvider(BaseLLMProvider):
 
         except Exception as e:
             logger.error("OpenAI generation failed", error=str(e), model=request.model)
-            raise self._handle_error(e, "OpenAI generation") from e
+            raise self._handle_error(e, "OpenAI generation")
 
-    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk, None]:
+    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk]:
         """Generate a streaming response."""
 
-        async def _stream() -> AsyncGenerator[LLMStreamChunk, None]:
+        async def _stream() -> AsyncGenerator[LLMStreamChunk]:
             self._validate_request(request)
 
             try:
-                # Prepare OpenAI request
-                openai_request = {
-                    "model": request.model,
-                    "messages": request.messages,
-                    "temperature": request.temperature,
-                    "max_tokens": request.max_tokens,
-                    "stream": True,
-                }
-
-                # Add tools if provided
-                if request.tools:
-                    openai_request["tools"] = request.tools
-                    if request.tool_choice:
-                        openai_request["tool_choice"] = request.tool_choice
+                # Convert messages to OpenAI format
+                openai_messages = []
+                for msg in request.messages:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    openai_messages.append({"role": role, "content": content})
 
                 # Stream the response
-                stream = await self.client.chat.completions.create(**openai_request)
+                stream = await self.client.chat.completions.create(  # type: ignore
+                    model=request.model,
+                    messages=openai_messages,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    stream=True,
+                    tools=request.tools if request.tools else None,
+                    tool_choice=request.tool_choice if request.tool_choice else None,
+                )
 
                 async for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content:
@@ -149,7 +149,7 @@ class OpenAIProvider(BaseLLMProvider):
                 logger.error(
                     "OpenAI streaming failed", error=str(e), model=request.model
                 )
-                raise self._handle_error(e, "OpenAI streaming") from e
+                raise self._handle_error(e, "OpenAI streaming")
 
         return _stream()
 
@@ -199,7 +199,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         except Exception as e:
             logger.error("Failed to fetch OpenAI models", error=str(e))
-            raise self._handle_error(e, "OpenAI models fetch") from e
+            raise self._handle_error(e, "OpenAI models fetch")
 
     async def health_check(self) -> bool:
         """Check if the provider is healthy."""
@@ -248,7 +248,7 @@ class OpenAIProvider(BaseLLMProvider):
             return list(response.data[0].embedding)
         except Exception as e:
             logger.error("OpenAI embedding failed", error=str(e), model=model)
-            raise self._handle_error(e, "OpenAI embedding") from e
+            raise self._handle_error(e, "OpenAI embedding")
 
     async def generate_with_vision(
         self,

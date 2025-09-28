@@ -44,7 +44,7 @@ class PostgreSQLRepository(BaseRepository):
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
                 "asyncpg is not available. Install with: pip install asyncpg"
-            )
+            ) from None
 
         super().__init__()
         self.settings = settings
@@ -65,7 +65,7 @@ class PostgreSQLRepository(BaseRepository):
             )
             self._connected = True
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to PostgreSQL: {e}") from e
+            raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
     async def disconnect(self) -> None:
         """Close database connection pool."""
@@ -86,7 +86,7 @@ class PostgreSQLRepository(BaseRepository):
             return False
 
     @asynccontextmanager
-    async def get_connection(self) -> AsyncGenerator[Any, None]:
+    async def get_connection(self) -> AsyncGenerator[Any]:
         """Get database connection from pool."""
         self._ensure_connected()
         if not self._pool:
@@ -116,10 +116,8 @@ class PostgreSQLRepository(BaseRepository):
                     session.updated_at,
                 )
                 return session
-            except asyncpg.UniqueViolationError as e:
-                raise DuplicateError(
-                    f"Session with ID {session.id} already exists"
-                ) from e
+            except asyncpg.UniqueViolationError:
+                raise DuplicateError(f"Session with ID {session.id} already exists")
 
     async def get_session(self, session_id: UUID) -> Session | None:
         """Get session from PostgreSQL."""
@@ -269,14 +267,12 @@ class PostgreSQLRepository(BaseRepository):
                     )
 
                     return message
-                except asyncpg.UniqueViolationError as e:
-                    raise DuplicateError(
-                        f"Message with ID {message.id} already exists"
-                    ) from e
-                except asyncpg.ForeignKeyViolationError as e:
+                except asyncpg.UniqueViolationError:
+                    raise DuplicateError(f"Message with ID {message.id} already exists")
+                except asyncpg.ForeignKeyViolationError:
                     raise NotFoundError(
                         f"Session with ID {message.session_id} not found"
-                    ) from e
+                    )
 
     async def get_message(self, message_id: UUID) -> Message | None:
         """Get message from PostgreSQL."""
@@ -416,10 +412,8 @@ class PostgreSQLRepository(BaseRepository):
                     agent.updated_at,
                 )
                 return agent
-            except asyncpg.UniqueViolationError as e:
-                raise DuplicateError(
-                    f"Agent with name '{agent.name}' already exists"
-                ) from e
+            except asyncpg.UniqueViolationError:
+                raise DuplicateError(f"Agent with name '{agent.name}' already exists")
 
     async def get_agent(self, agent_id: UUID) -> Agent | None:
         """Get agent by ID."""
@@ -505,10 +499,8 @@ class PostgreSQLRepository(BaseRepository):
                     raise NotFoundError(f"Agent with ID {agent.id} not found")
 
                 return agent
-            except asyncpg.UniqueViolationError as e:
-                raise DuplicateError(
-                    f"Agent with name '{agent.name}' already exists"
-                ) from e
+            except asyncpg.UniqueViolationError:
+                raise DuplicateError(f"Agent with name '{agent.name}' already exists")
 
     async def delete_agent(self, agent_id: UUID) -> bool:
         """Delete an agent."""
@@ -539,10 +531,8 @@ class PostgreSQLRepository(BaseRepository):
                     tool.updated_at,
                 )
                 return tool
-            except asyncpg.UniqueViolationError as e:
-                raise DuplicateError(
-                    f"Tool with name '{tool.name}' already exists"
-                ) from e
+            except asyncpg.UniqueViolationError:
+                raise DuplicateError(f"Tool with name '{tool.name}' already exists")
 
     async def get_tool(self, tool_id: UUID) -> Tool | None:
         """Get tool by ID."""
@@ -638,10 +628,8 @@ class PostgreSQLRepository(BaseRepository):
                     raise NotFoundError(f"Tool with ID {tool.id} not found")
 
                 return tool
-            except asyncpg.UniqueViolationError as e:
-                raise DuplicateError(
-                    f"Tool with name '{tool.name}' already exists"
-                ) from e
+            except asyncpg.UniqueViolationError:
+                raise DuplicateError(f"Tool with name '{tool.name}' already exists")
 
     async def delete_tool(self, tool_id: UUID) -> bool:
         """Delete a tool."""
@@ -673,10 +661,10 @@ class PostgreSQLRepository(BaseRepository):
                     server.updated_at,
                 )
                 return server
-            except asyncpg.UniqueViolationError as e:
+            except asyncpg.UniqueViolationError:
                 raise DuplicateError(
                     f"MCP Server with name '{server.name}' already exists"
-                ) from e
+                )
 
     async def get_mcp_server(self, server_id: UUID) -> MCPServer | None:
         """Get MCP server by ID."""
@@ -778,10 +766,10 @@ class PostgreSQLRepository(BaseRepository):
                     raise NotFoundError(f"MCP Server with ID {server.id} not found")
 
                 return server
-            except asyncpg.UniqueViolationError as e:
+            except asyncpg.UniqueViolationError:
                 raise DuplicateError(
                     f"MCP Server with name '{server.name}' already exists"
-                ) from e
+                )
 
     async def delete_mcp_server(self, server_id: UUID) -> bool:
         """Delete an MCP server."""

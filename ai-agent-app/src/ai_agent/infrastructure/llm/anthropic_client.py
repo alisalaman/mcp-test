@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 import structlog
 
 from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam, ToolParam
+from anthropic.types import MessageParam
 
 from .base import (
     BaseLLMProvider,
@@ -49,22 +49,15 @@ class AnthropicProvider(BaseLLMProvider):
             # Convert messages to Anthropic format
             messages = self._convert_messages(request.messages)
 
-            # Prepare Anthropic request
-            anthropic_request = {
-                "model": request.model,
-                "messages": messages,
-                "max_tokens": request.max_tokens or self.max_tokens,
-                "temperature": request.temperature,
-            }
-
-            # Add tools if provided
-            if request.tools:
-                anthropic_request["tools"] = self._convert_tools(request.tools)
-                if request.tool_choice:
-                    anthropic_request["tool_choice"] = request.tool_choice
-
             # Make the request
-            response = await self.client.messages.create(**anthropic_request)
+            response = await self.client.messages.create(  # type: ignore
+                model=request.model,
+                messages=messages,
+                max_tokens=request.max_tokens or self.max_tokens,
+                temperature=request.temperature,
+                tools=self._convert_tools(request.tools) if request.tools else None,
+                tool_choice=request.tool_choice if request.tool_choice else None,
+            )
 
             # Extract content
             content = ""
@@ -109,35 +102,27 @@ class AnthropicProvider(BaseLLMProvider):
             logger.error(
                 "Anthropic generation failed", error=str(e), model=request.model
             )
-            raise self._handle_error(e, "Anthropic generation") from e
+            raise self._handle_error(e, "Anthropic generation")
 
-    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk, None]:
+    def stream(self, request: LLMRequest) -> AsyncGenerator[LLMStreamChunk]:
         """Generate a streaming response."""
 
-        async def _stream() -> AsyncGenerator[LLMStreamChunk, None]:
+        async def _stream() -> AsyncGenerator[LLMStreamChunk]:
             self._validate_request(request)
 
             try:
                 # Convert messages to Anthropic format
                 messages = self._convert_messages(request.messages)
 
-                # Prepare Anthropic request
-                anthropic_request = {
-                    "model": request.model,
-                    "messages": messages,
-                    "max_tokens": request.max_tokens or self.max_tokens,
-                    "temperature": request.temperature,
-                    "stream": True,
-                }
-
-                # Add tools if provided
-                if request.tools:
-                    anthropic_request["tools"] = self._convert_tools(request.tools)
-                    if request.tool_choice:
-                        anthropic_request["tool_choice"] = request.tool_choice
-
                 # Stream the response
-                async with self.client.messages.stream(**anthropic_request) as stream:
+                async with self.client.messages.stream(
+                    model=request.model,
+                    messages=messages,
+                    max_tokens=request.max_tokens or self.max_tokens,
+                    temperature=request.temperature,
+                    tools=self._convert_tools(request.tools) if request.tools else None,  # type: ignore
+                    tool_choice=request.tool_choice if request.tool_choice else None,  # type: ignore
+                ) as stream:
                     async for event in stream:
                         if event.type == "content_block_delta":
                             if hasattr(event.delta, "text") and event.delta.text:
@@ -162,7 +147,7 @@ class AnthropicProvider(BaseLLMProvider):
                 logger.error(
                     "Anthropic streaming failed", error=str(e), model=request.model
                 )
-                raise self._handle_error(e, "Anthropic streaming") from e
+                raise self._handle_error(e, "Anthropic streaming")
 
         return _stream()
 
@@ -228,7 +213,7 @@ class AnthropicProvider(BaseLLMProvider):
 
         except Exception as e:
             logger.error("Failed to get Anthropic models", error=str(e))
-            raise self._handle_error(e, "Anthropic models fetch") from e
+            raise self._handle_error(e, "Anthropic models fetch")
 
     async def health_check(self) -> bool:
         """Check if the provider is healthy."""
@@ -263,11 +248,15 @@ class AnthropicProvider(BaseLLMProvider):
                     # If no user message yet, create one
                     converted.append({"role": "user", "content": f"System: {content}"})
             else:
-                converted.append({"role": role, "content": content})
+                # Ensure role is valid for Anthropic
+                if role == "user":
+                    converted.append({"role": "user", "content": content})
+                elif role == "assistant":
+                    converted.append({"role": "assistant", "content": content})
 
         return converted
 
-    def _convert_tools(self, tools: list[dict[str, Any]]) -> list[ToolParam]:
+    def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert tools to Anthropic format."""
         converted = []
         for tool in tools:

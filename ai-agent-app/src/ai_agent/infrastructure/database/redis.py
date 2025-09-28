@@ -34,7 +34,7 @@ class RedisRepository(BaseRepository):
         if not REDIS_AVAILABLE:
             raise ImportError(
                 "Redis is not available. Install with: pip install redis[hiredis]"
-            )
+            ) from None
 
         super().__init__()
         self.settings = settings
@@ -69,7 +69,7 @@ class RedisRepository(BaseRepository):
             await self._ensure_redis_connection().ping()
             self._connected = True
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to Redis: {e}") from e
+            raise ConnectionError(f"Failed to connect to Redis: {e}")
 
     async def disconnect(self) -> None:
         """Close Redis connection."""
@@ -104,7 +104,9 @@ class RedisRepository(BaseRepository):
         # Check if session already exists
         redis_client = self._ensure_redis_connection()
         if await redis_client.exists(session_key):
-            raise DuplicateError(f"Session with ID {session.id} already exists")
+            raise DuplicateError(
+                f"Session with ID {session.id} already exists"
+            ) from None
 
         # Store session data
         session_data = session.model_dump_json()

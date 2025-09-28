@@ -162,7 +162,7 @@ class AgentService:
 
     async def execute_agent_stream(
         self, agent_id: UUID, request: AgentExecutionRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Execute agent with streaming response."""
         # This would implement streaming response
         # For now, return a simple generator

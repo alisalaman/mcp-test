@@ -288,13 +288,13 @@ class MCPClient:
 
             return response
 
-        except TimeoutError as e:
+        except TimeoutError:
             self.pending_requests.pop(request_id, None)
             raise MCPError(
                 code=MCPErrorCode.TIMEOUT,
                 message=f"Request {request_id} timed out",
                 request_id=request_id,
-            ) from e
+            )
         except Exception as e:
             self.pending_requests.pop(request_id, None)
             if isinstance(e, MCPError):
@@ -303,7 +303,7 @@ class MCPClient:
                 code=MCPErrorCode.INTERNAL_ERROR,
                 message=f"Request failed: {str(e)}",
                 request_id=request_id,
-            ) from e
+            )
 
     async def send_notification(
         self, method: str, params: dict[str, Any] | None = None

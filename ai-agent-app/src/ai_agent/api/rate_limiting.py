@@ -50,16 +50,25 @@ def get_user_rate_limit(user_tier: str) -> str:
 def rate_limit_by_tier(user_tier: str) -> Callable[..., Any]:
     """Create rate limit decorator based on user tier."""
     limit = get_user_rate_limit(user_tier)
-    return limiter.limit(limit)  # type: ignore[no-any-return]
+    return limiter.limit(limit)
 
 
 def rate_limit_endpoint(endpoint_name: str) -> Callable[..., Any]:
     """Create rate limit decorator for specific endpoint."""
     limit = ENDPOINT_LIMITS.get(endpoint_name, "100/minute")
-    return limiter.limit(limit)  # type: ignore[no-any-return]
+    return limiter.limit(limit)
 
 
 # Rate limit exceeded handler
-def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> Response:
     """Handle rate limit exceeded errors."""
-    return _rate_limit_exceeded_handler(request, exc)  # type: ignore[no-any-return]
+    if isinstance(exc, RateLimitExceeded):
+        return _rate_limit_exceeded_handler(request, exc)
+    # Fallback for other exceptions
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded"},
+        headers={"Retry-After": "60"},
+    )

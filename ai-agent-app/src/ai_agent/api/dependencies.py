@@ -1,15 +1,16 @@
 """FastAPI dependencies for dependency injection and service management."""
 
 import uuid
-
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
 from typing import TYPE_CHECKING
+
+from fastapi import Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from ai_agent.config.settings import ApplicationSettings, get_settings
 from ai_agent.infrastructure.database.factory import RepositoryFactory
 from ai_agent.infrastructure.database.base import Repository
+from ai_agent.security.auth import get_auth_service
+from ai_agent.domain.exceptions import AuthenticationException
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
@@ -40,32 +41,77 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str:
     """
-    Get current user from request.
+    Get current user from request with proper JWT validation.
 
-    For now, this is a simplified implementation that extracts user from headers.
-    In production, this would validate JWT tokens or API keys.
+    Validates JWT tokens or API keys and returns the authenticated user ID.
     """
+    auth_service = get_auth_service()
+    settings = get_settings()
+
     # Check for API key in headers
     api_key = request.headers.get("X-API-Key")
     if api_key:
-        # In production, validate API key against database
-        return f"api_user_{api_key[:8]}"
+        try:
+            user = auth_service.verify_api_key(api_key)
+            if user:
+                return str(user.id)
+        except Exception as e:
+            raise AuthenticationException(f"Invalid API key: {str(e)}")
 
-    # Check for Authorization header
+    # Check for Authorization header with JWT token
     if credentials:
-        # In production, validate JWT token
-        return f"jwt_user_{credentials.credentials[:8]}"
+        try:
+            user = auth_service.verify_access_token(credentials.credentials)
+            return str(user.id)
+        except Exception as e:
+            raise AuthenticationException(f"Invalid JWT token: {str(e)}")
 
     # For development, allow anonymous access
-    if get_settings().is_development:
+    if settings.is_development:
         return "anonymous_user"
 
     # In production, require authentication
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    raise AuthenticationException("Authentication required")
+
+
+async def get_current_user_with_roles(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> tuple[str, list[str]]:
+    """
+    Get current user with roles from request with proper JWT validation.
+
+    Returns tuple of (user_id, roles) for authorization purposes.
+    """
+    auth_service = get_auth_service()
+    settings = get_settings()
+
+    # Check for API key in headers
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        try:
+            user = auth_service.verify_api_key(api_key)
+            if user:
+                roles = [role.value for role in user.roles]
+                return user.id, roles
+        except Exception as e:
+            raise AuthenticationException(f"Invalid API key: {str(e)}")
+
+    # Check for Authorization header with JWT token
+    if credentials:
+        try:
+            user = auth_service.verify_access_token(credentials.credentials)
+            roles = [role.value for role in user.roles]
+            return user.id, roles
+        except Exception as e:
+            raise AuthenticationException(f"Invalid JWT token: {str(e)}")
+
+    # For development, allow anonymous access with default role
+    if settings.is_development:
+        return "anonymous_user", ["readonly"]
+
+    # In production, require authentication
+    raise AuthenticationException("Authentication required")
 
 
 async def get_session_service(

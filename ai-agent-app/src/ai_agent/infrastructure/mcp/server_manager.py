@@ -222,7 +222,7 @@ class MCPServerManager:
                 else:
                     raise ValueError(
                         f"Unsupported server type: {server_info.server_type}"
-                    )
+                    ) from None
 
                 server_info.status = MCPServerStatus.RUNNING
                 server_info.updated_at = asyncio.get_event_loop().time()
