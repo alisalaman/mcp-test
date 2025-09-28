@@ -5,9 +5,12 @@ from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from pydantic import BaseModel
+import structlog
 
 from ai_agent.api.websocket.connection_manager import manager
 from ai_agent.config.settings import get_settings
+
+logger = structlog.get_logger()
 
 
 class QueuedMessage(BaseModel):
@@ -217,10 +220,13 @@ class MessageQueue:
                         await self.mark_message_delivered(msg.message_id)
 
                 if expired_messages:
-                    print(f"Cleaned up {len(expired_messages)} expired messages")
+                    logger.debug(
+                        "Cleaned up expired messages",
+                        count=len(expired_messages),
+                    )
 
             except Exception as e:
-                print(f"Error in cleanup task: {e}")
+                logger.error("Error in cleanup task", error=str(e))
 
     async def _deliver_queued_messages(self) -> None:
         """Background task to deliver queued messages to reconnected users."""
@@ -255,16 +261,20 @@ class MessageQueue:
                                         await self.mark_message_delivered(
                                             msg.message_id
                                         )
-                                        print(
-                                            f"Removed message {msg.message_id} after {msg.max_retries} failed deliveries"
+                                        logger.warning(
+                                            "Removed message after max retries",
+                                            message_id=msg.message_id,
+                                            max_retries=msg.max_retries,
                                         )
 
-                                    print(
-                                        f"Failed to deliver message {msg.message_id}: {e}"
+                                    logger.warning(
+                                        "Failed to deliver message",
+                                        message_id=msg.message_id,
+                                        error=str(e),
                                     )
 
             except Exception as e:
-                print(f"Error in delivery task: {e}")
+                logger.error("Error in delivery task", error=str(e))
 
     async def get_queue_stats(self) -> dict[str, Any]:
         """Get queue statistics."""

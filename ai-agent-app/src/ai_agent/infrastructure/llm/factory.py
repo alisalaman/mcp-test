@@ -264,12 +264,13 @@ class LLMProviderManager:
             "provider_details": {},
         }
 
-        # Count by type
-        for config in self._configs.values():
-            provider_type: str = str(config.provider_type.value)
-            if provider_type not in stats["providers_by_type"]:  # type: ignore
-                stats["providers_by_type"][provider_type] = 0  # type: ignore
-            stats["providers_by_type"][provider_type] += 1  # type: ignore
+        # Use Counter for cleaner counting logic
+        from collections import Counter
+
+        provider_counts = Counter(
+            str(config.provider_type.value) for config in self._configs.values()
+        )
+        stats["providers_by_type"] = dict(provider_counts)
 
         # Provider details
         for config_id, config in self._configs.items():

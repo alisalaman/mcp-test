@@ -8,8 +8,11 @@ from uuid import UUID
 
 from fastapi import WebSocket
 from pydantic import BaseModel
+import structlog
 
 from ai_agent.config.settings import get_settings
+
+logger = structlog.get_logger()
 
 
 class ConnectionInfo(BaseModel):
@@ -118,7 +121,11 @@ class WebSocketManager:
             try:
                 await websocket.send_text(json.dumps(message))
             except Exception as e:
-                print(f"Error sending message to {connection_id}: {e}")
+                logger.error(
+                    "Failed to send message to connection",
+                    connection_id=connection_id,
+                    error=str(e),
+                )
                 await self.disconnect(connection_id)
 
     async def send_to_user(self, message: dict[str, Any], user_id: str) -> None:

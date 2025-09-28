@@ -289,7 +289,9 @@ class ApplicationSettings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     security: SecuritySettings = Field(
         default_factory=lambda: SecuritySettings(
-            secret_key="dev-secret-key-change-in-production-32chars"
+            secret_key=os.getenv(
+                "SECURITY_SECRET_KEY", "dev-secret-key-change-in-production-32chars"
+            )
         )
     )
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
@@ -330,7 +332,9 @@ class DevelopmentSettings(ApplicationSettings):
     # Relaxed security for development
     security: SecuritySettings = Field(
         default_factory=lambda: SecuritySettings(
-            secret_key="dev-secret-key-change-in-production-32chars",
+            secret_key=os.getenv(
+                "SECURITY_SECRET_KEY", "dev-secret-key-change-in-production-32chars"
+            ),
             cors_origins=["http://localhost:3000", "http://localhost:3001"],
         )
     )
@@ -468,9 +472,12 @@ class ConfigurationValidator:
         """Validate settings or exit with error."""
         errors = ConfigurationValidator.validate_settings(settings)
         if errors:
-            print("Configuration validation failed:")
+            import structlog
+
+            logger = structlog.get_logger()
+            logger.error("Configuration validation failed", errors=errors)
             for error in errors:
-                print(f"  - {error}")
+                logger.error("Configuration error", error=error)
             sys.exit(1)
 
 

@@ -5,8 +5,10 @@ import uuid
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+import structlog
 
-from ai_agent.config.settings import get_settings
+
+logger = structlog.get_logger()
 
 
 class CorrelationIDMiddleware(BaseHTTPMiddleware):
@@ -38,14 +40,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         """Log request details."""
-        settings = get_settings()
-
         # Start timing
         start_time = time.time()
-
-        # Log request
-        if settings.observability.log_level.value in ["DEBUG", "INFO"]:
-            print(f"Request: {request.method} {request.url.path}")
 
         # Process request
         response = await call_next(request)
@@ -56,9 +52,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Add timing header
         response.headers["X-Process-Time"] = str(process_time)
 
-        # Log response
-        if settings.observability.log_level.value in ["DEBUG", "INFO"]:
-            print(f"Response: {response.status_code} in {process_time:.3f}s")
+        # Log request and response
+        logger.info(
+            "Request processed",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration=process_time,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
 
         return response
 

@@ -6,11 +6,14 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+import structlog
 
 from ai_agent.api.websocket.auth import websocket_auth
 from ai_agent.api.websocket.connection_manager import manager
 from ai_agent.api.websocket.event_handlers import event_handler
 from ai_agent.config.settings import get_settings
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
@@ -93,7 +96,7 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error("WebSocket error occurred", error=str(e))
     finally:
         # Clean up connection
         if "connection_id" in locals():
