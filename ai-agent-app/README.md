@@ -47,6 +47,7 @@ The application follows a layered architecture with clear separation of concerns
 
 - Python 3.12+
 - UV package manager
+- Docker Desktop (recommended for PostgreSQL and Redis)
 - PostgreSQL (optional, for persistent storage)
 - Redis (optional, for caching)
 
@@ -63,8 +64,12 @@ The application follows a layered architecture with clear separation of concerns
    make install-dev
    ```
 
-3. **Set up environment**:
+3. **Set up services (Docker recommended)**:
    ```bash
+   # Start PostgreSQL and Redis with Docker
+   python scripts/setup_docker.py setup
+
+   # Or set up manually
    cp .env.example .env
    # Edit .env with your configuration
    ```
@@ -198,12 +203,17 @@ API documentation is automatically generated and available at `/docs` when runni
 ### Docker
 
 ```bash
+# Start services with Docker
+python scripts/setup_docker.py setup
+
 # Build production image
 make docker-build
 
 # Run with Docker Compose
 make docker-dev
 ```
+
+See [Docker Setup Guide](docs/deployment/docker-setup.md) for detailed Docker configuration.
 
 ### Kubernetes
 
@@ -237,7 +247,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions, issues, or contributions:
 
-1. Check the documentation in the `docs/` directory
+1. Check the documentation in the `docs/` directory:
+   - [Development Setup Guide](docs/development/setup-guide.md) for getting started
+   - [Docker Setup Guide](docs/deployment/docker-setup.md) for containerized services
+   - [Architecture Documentation](docs/architecture/) for technical details
 2. Review existing issues and discussions
 3. Create a new issue with detailed information
 4. Follow the contributing guidelines

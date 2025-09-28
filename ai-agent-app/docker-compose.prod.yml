@@ -1,0 +1,43 @@
+# Production-specific overrides
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: ai_agent_prod
+      POSTGRES_USER: ai_agent_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_change_me}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    # Remove port exposure for security
+    ports: []
+    # Add production security settings
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  redis:
+    # Remove port exposure for security
+    ports: []
+    volumes:
+      - redis_prod_data:/data
+    # Add production Redis configuration
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+
+volumes:
+  postgres_prod_data:
+    driver: local
+  redis_prod_data:
+    driver: local

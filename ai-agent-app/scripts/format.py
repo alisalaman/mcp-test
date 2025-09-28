@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Code formatting script for the AI Agent application."""
 
-import subprocess
 import sys
 from pathlib import Path
 
-from .colors import (
+# Add scripts directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+import subprocess
+
+from colors import (
     command,
     dim,
     error,
