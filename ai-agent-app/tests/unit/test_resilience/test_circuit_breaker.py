@@ -3,6 +3,7 @@
 import time
 
 import pytest
+
 from ai_agent.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,

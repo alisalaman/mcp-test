@@ -73,16 +73,6 @@ def main() -> None:
             ["black", "--check", str(src_path), str(tests_path), str(scripts_path)],
             "Black formatting check",
         ),
-        (
-            [
-                "isort",
-                "--check-only",
-                str(src_path),
-                str(tests_path),
-                str(scripts_path),
-            ],
-            "Import sorting check",
-        ),
         (["mypy", str(src_path)], "Type checking"),
     ]
 

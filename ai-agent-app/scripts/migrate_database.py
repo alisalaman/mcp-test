@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import asyncpg
 import structlog
+
 from ai_agent.config.settings import get_settings
 from ai_agent.infrastructure.database.postgresql import PostgreSQLRepository
 

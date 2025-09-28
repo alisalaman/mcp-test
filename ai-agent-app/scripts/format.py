@@ -60,7 +60,7 @@ def run_command(
 
 
 def main() -> None:
-    """Format code using black, isort, and ruff."""
+    """Format code using black and ruff."""
     project_root = Path(__file__).parent.parent
     src_path = project_root / "src"
     tests_path = project_root / "tests"
@@ -83,10 +83,6 @@ def main() -> None:
         (
             ["black", str(src_path), str(tests_path), str(scripts_path)],
             "Black formatting",
-        ),
-        (
-            ["isort", str(src_path), str(tests_path), str(scripts_path)],
-            "Import sorting",
         ),
     ]
 
